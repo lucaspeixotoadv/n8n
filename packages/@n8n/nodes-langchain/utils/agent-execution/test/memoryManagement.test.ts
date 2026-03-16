@@ -353,9 +353,13 @@ describe('memoryManagement', () => {
 			];
 
 			const result = buildMessagesFromSteps(steps);
-
+			// Should be a NEW AIMessage, not the same runtime reference
+			expect(result[0]).not.toBe(aiMessage);
+			expect(result[0]).toBeInstanceOf(AIMessage);
+			expect((result[0] as AIMessage).tool_calls?.[0].id).toBe('call-123');
+			expect((result[0] as AIMessage).tool_calls?.[0].name).toBe('calculator');
+			expect((result[0] as AIMessage).tool_calls?.[0].args).toEqual({ expression: '2+2' });
 			expect(result).toHaveLength(2);
-			expect(result[0]).toBe(aiMessage);
 			expect(result[1]).toBeInstanceOf(ToolMessage);
 			expect(result[1].content).toBe('4');
 			expect((result[1] as ToolMessage).tool_call_id).toBe('call-123');
@@ -427,15 +431,152 @@ describe('memoryManagement', () => {
 			const result = buildMessagesFromSteps(steps);
 
 			expect(result).toHaveLength(4);
-			expect(result[0]).toBe(aiMessage1);
+			// New AIMessages, not original runtime references
+			expect(result[0]).not.toBe(aiMessage1);
+			expect(result[0]).toBeInstanceOf(AIMessage);
+			expect((result[0] as AIMessage).tool_calls?.[0].id).toBe('call-1');
 			expect(result[1]).toBeInstanceOf(ToolMessage);
-			expect(result[2]).toBe(aiMessage2);
+			expect(result[2]).not.toBe(aiMessage2);
+			expect(result[2]).toBeInstanceOf(AIMessage);
+			expect((result[2] as AIMessage).tool_calls?.[0].id).toBe('call-2');
 			expect(result[3]).toBeInstanceOf(ToolMessage);
 		});
 
 		it('should return empty array for empty steps', () => {
 			const result = buildMessagesFromSteps([]);
 			expect(result).toHaveLength(0);
+		});
+
+		it('should not carry Gemini additional_kwargs from existingAIMessage to persisted message', () => {
+			const aiMessageWithSignature = new AIMessage({
+				content: 'Calling tool',
+				tool_calls: [
+					{
+						id: 'call-gemini',
+						name: 'calculator',
+						args: { expression: '1+1' },
+						type: 'tool_call',
+					},
+				],
+				additional_kwargs: {
+					__gemini_function_call_thought_signatures__: {
+						'call-gemini': 'very-long-base64-signature-string',
+					},
+					signatures: ['', 'very-long-base64-signature-string'],
+				},
+			});
+			const steps: ToolCallData[] = [
+				{
+					action: {
+						tool: 'calculator',
+						toolInput: { expression: '1+1' },
+						log: 'Calc',
+						messageLog: [aiMessageWithSignature],
+						toolCallId: 'call-gemini',
+						type: 'tool_call',
+					},
+					observation: '2',
+				},
+			];
+			const result = buildMessagesFromSteps(steps);
+			const persistedAIMessage = result[0] as AIMessage;
+			expect(persistedAIMessage).not.toBe(aiMessageWithSignature);
+			expect(persistedAIMessage.tool_calls?.[0].id).toBe('call-gemini');
+			expect(persistedAIMessage.tool_calls?.[0].name).toBe('calculator');
+			expect(persistedAIMessage.additional_kwargs).toEqual({});
+		});
+
+		it('should not carry Anthropic thinking blocks from existingAIMessage to persisted message', () => {
+			const aiMessageWithThinking = new AIMessage({
+				content: [
+					{ type: 'thinking', thinking: 'Deep reasoning...', signature: 'sig123' },
+					{ type: 'tool_use', id: 'call-anthropic', name: 'search', input: { query: 'test' } },
+				],
+			});
+			const steps: ToolCallData[] = [
+				{
+					action: {
+						tool: 'search',
+						toolInput: { query: 'test' },
+						log: 'Searching',
+						messageLog: [aiMessageWithThinking],
+						toolCallId: 'call-anthropic',
+						type: 'tool_call',
+					},
+					observation: 'Found results',
+				},
+			];
+			const result = buildMessagesFromSteps(steps);
+			const persistedAIMessage = result[0] as AIMessage;
+			expect(persistedAIMessage).not.toBe(aiMessageWithThinking);
+			expect(typeof persistedAIMessage.content).toBe('string');
+			expect(persistedAIMessage.content).toContain('search');
+			expect(persistedAIMessage.tool_calls?.[0].id).toBe('call-anthropic');
+		});
+
+		it('should preserve toolCallId from existingAIMessage in new AIMessage', () => {
+			const aiMessage = new AIMessage({
+				content: 'Runtime content with metadata',
+				tool_calls: [
+					{
+						id: 'original-id-from-runtime',
+						name: 'tool',
+						args: { key: 'value' },
+						type: 'tool_call',
+					},
+				],
+			});
+			const steps: ToolCallData[] = [
+				{
+					action: {
+						tool: 'tool',
+						toolInput: { key: 'value' },
+						log: 'Log',
+						messageLog: [aiMessage],
+						toolCallId: 'fallback-id',
+						type: 'tool_call',
+					},
+					observation: 'Result',
+				},
+			];
+			const result = buildMessagesFromSteps(steps);
+			const persistedAIMessage = result[0] as AIMessage;
+			expect(persistedAIMessage.tool_calls?.[0].id).toBe('original-id-from-runtime');
+			expect((result[1] as ToolMessage).tool_call_id).toBe('original-id-from-runtime');
+		});
+
+		it('should create single tool_call per step even when existingAIMessage has multiple', () => {
+			const sharedAIMessage = new AIMessage({
+				content: 'Calling tools: weather, time, calculator',
+				tool_calls: [
+					{ id: 'call-1', name: 'weather', args: { location: 'NYC' }, type: 'tool_call' },
+					{ id: 'call-2', name: 'time', args: { timezone: 'EST' }, type: 'tool_call' },
+					{ id: 'call-3', name: 'calculator', args: { expr: '1+1' }, type: 'tool_call' },
+				],
+				additional_kwargs: {
+					__gemini_function_call_thought_signatures__: { 'call-1': 'sig' },
+					signatures: ['', 'sig', '', ''],
+				},
+			});
+			const steps: ToolCallData[] = [
+				{
+					action: {
+						tool: 'weather',
+						toolInput: { location: 'NYC' },
+						log: 'Weather',
+						messageLog: [sharedAIMessage],
+						toolCallId: 'call-1',
+						type: 'tool_call',
+					},
+					observation: 'Sunny',
+				},
+			];
+			const result = buildMessagesFromSteps(steps);
+			const persistedAIMessage = result[0] as AIMessage;
+			expect(persistedAIMessage.tool_calls).toHaveLength(1);
+			expect(persistedAIMessage.tool_calls?.[0].id).toBe('call-1');
+			expect(persistedAIMessage.tool_calls?.[0].name).toBe('weather');
+			expect(persistedAIMessage.additional_kwargs).toEqual({});
 		});
 	});
 
@@ -484,7 +625,10 @@ describe('memoryManagement', () => {
 			expect(savedMessages).toHaveLength(4);
 			expect(savedMessages[0]).toBeInstanceOf(HumanMessage);
 			expect(savedMessages[0].content).toBe('Calculate 2+2');
-			expect(savedMessages[1]).toBe(aiMessage);
+			// New AIMessage created for persistence, not original runtime reference
+			expect(savedMessages[1]).not.toBe(aiMessage);
+			expect(savedMessages[1]).toBeInstanceOf(AIMessage);
+			expect((savedMessages[1] as AIMessage).tool_calls?.[0].id).toBe('call-123');
 			expect(savedMessages[2]).toBeInstanceOf(ToolMessage);
 			expect(savedMessages[3]).toBeInstanceOf(AIMessage);
 			expect(savedMessages[3].content).toBe('The answer is 4');

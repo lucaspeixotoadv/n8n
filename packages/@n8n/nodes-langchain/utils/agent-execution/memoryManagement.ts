@@ -88,20 +88,21 @@ export function buildMessagesFromSteps(steps: ToolCallData[]): BaseMessage[] {
 		const toolCallId =
 			existingToolCallId ?? extractToolCallId(step.action.toolCallId, step.action.tool);
 
-		// Use existing AIMessage or create a synthetic one
-		const aiMessage =
-			existingAIMessage ??
-			new AIMessage({
-				content: `Calling ${step.action.tool} with input: ${JSON.stringify(step.action.toolInput)}`,
-				tool_calls: [
-					{
-						id: toolCallId,
-						name: step.action.tool,
-						args: step.action.toolInput,
-						type: 'tool_call',
-					},
-				],
-			});
+		// Always create a new AIMessage for persistence — never reuse runtime references.
+		// The existingAIMessage may carry provider-specific metadata (Gemini thought_signatures,
+		// Anthropic thinking blocks) that are only needed for the immediate tool call cycle,
+		// not for historical context in memory.
+		const aiMessage = new AIMessage({
+			content: `Calling ${step.action.tool} with input: ${JSON.stringify(step.action.toolInput)}`,
+			tool_calls: [
+				{
+					id: toolCallId,
+					name: step.action.tool,
+					args: step.action.toolInput,
+					type: 'tool_call',
+				},
+			],
+		});
 
 		// Create ToolMessage with the observation result
 		const toolMessage = new ToolMessage({
