@@ -500,6 +500,34 @@ export class Redis implements INodeType {
 				description: 'Whether to push or pop data from the end of the list',
 			},
 			{
+				displayName: 'Expire',
+				name: 'expire',
+				type: 'boolean',
+				displayOptions: {
+					show: {
+						operation: ['push'],
+					},
+				},
+				default: false,
+				description: 'Whether to set a timeout on key',
+			},
+			{
+				displayName: 'TTL',
+				name: 'ttl',
+				type: 'number',
+				typeOptions: {
+					minValue: 1,
+				},
+				displayOptions: {
+					show: {
+						operation: ['push'],
+						expire: [true],
+					},
+				},
+				default: 60,
+				description: 'Number of seconds before key expiration',
+			},
+			{
 				displayName: 'Name',
 				name: 'propertyName',
 				type: 'string',
@@ -654,7 +682,12 @@ export class Redis implements INodeType {
 							const redisList = this.getNodeParameter('list', itemIndex) as string;
 							const messageData = this.getNodeParameter('messageData', itemIndex) as string;
 							const tail = this.getNodeParameter('tail', itemIndex, false) as boolean;
+							const expire = this.getNodeParameter('expire', itemIndex, false) as boolean;
+							const ttl = this.getNodeParameter('ttl', itemIndex, -1) as number;
 							await client[tail ? 'rPush' : 'lPush'](redisList, messageData);
+							if (expire && ttl > 0) {
+								await client.expire(redisList, ttl);
+							}
 							returnItems.push(items[itemIndex]);
 						} else if (operation === 'pop') {
 							const redisList = this.getNodeParameter('list', itemIndex) as string;
