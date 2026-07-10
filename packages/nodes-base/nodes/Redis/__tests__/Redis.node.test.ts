@@ -596,6 +596,82 @@ master_failover_state:no-failover
 					expect(mockClient.quit).toHaveBeenCalled();
 				});
 			});
+
+			describe('push operation', () => {
+				beforeEach(() => {
+					thisArg.getInputData.mockReturnValue([{ json: { x: 1 } }]);
+					thisArg.getNodeParameter.calledWith('operation', 0).mockReturnValue('push');
+					thisArg.getNodeParameter.calledWith('list', 0).mockReturnValue('myList');
+					thisArg.getNodeParameter.calledWith('messageData', 0).mockReturnValue('myData');
+				});
+
+				it('should push to the head of the list by default', async () => {
+					thisArg.getNodeParameter.calledWith('tail', 0, false).mockReturnValue(false);
+					thisArg.getNodeParameter.calledWith('expire', 0, false).mockReturnValue(false);
+
+					const output = await node.execute.call(thisArg);
+
+					expect(mockClient.lPush).toHaveBeenCalledWith('myList', 'myData');
+					expect(mockClient.rPush).not.toHaveBeenCalled();
+					expect(mockClient.expire).not.toHaveBeenCalled();
+					expect(output[0][0].json).toEqual({ x: 1 });
+				});
+
+				it('should push to the tail of the list when tail = true', async () => {
+					thisArg.getNodeParameter.calledWith('tail', 0, false).mockReturnValue(true);
+					thisArg.getNodeParameter.calledWith('expire', 0, false).mockReturnValue(false);
+
+					await node.execute.call(thisArg);
+
+					expect(mockClient.rPush).toHaveBeenCalledWith('myList', 'myData');
+					expect(mockClient.lPush).not.toHaveBeenCalled();
+					expect(mockClient.expire).not.toHaveBeenCalled();
+				});
+
+				it('should renew the TTL on the list when expire = true', async () => {
+					thisArg.getNodeParameter.calledWith('tail', 0, false).mockReturnValue(false);
+					thisArg.getNodeParameter.calledWith('expire', 0, false).mockReturnValue(true);
+					thisArg.getNodeParameter.calledWith('ttl', 0, -1).mockReturnValue(120);
+
+					await node.execute.call(thisArg);
+
+					expect(mockClient.lPush).toHaveBeenCalledWith('myList', 'myData');
+					expect(mockClient.expire).toHaveBeenCalledWith('myList', 120);
+				});
+
+				it('should not set expire when expire = true but ttl <= 0', async () => {
+					thisArg.getNodeParameter.calledWith('tail', 0, false).mockReturnValue(false);
+					thisArg.getNodeParameter.calledWith('expire', 0, false).mockReturnValue(true);
+					thisArg.getNodeParameter.calledWith('ttl', 0, -1).mockReturnValue(0);
+
+					await node.execute.call(thisArg);
+
+					expect(mockClient.expire).not.toHaveBeenCalled();
+				});
+
+				it('should continue and return an error when continue on fail is enabled and an error is thrown', async () => {
+					thisArg.getNodeParameter.calledWith('tail', 0, false).mockReturnValue(false);
+					thisArg.getNodeParameter.calledWith('expire', 0, false).mockReturnValue(false);
+					thisArg.continueOnFail.mockReturnValue(true);
+					mockClient.lPush.mockRejectedValue(new Error('Redis error'));
+
+					const output = await node.execute.call(thisArg);
+
+					expect(mockClient.lPush).toHaveBeenCalled();
+					expect(output[0][0].json).toEqual({ error: 'Redis error' });
+				});
+
+				it('should throw an error when continue on fail is disabled and an error is thrown', async () => {
+					thisArg.getNodeParameter.calledWith('tail', 0, false).mockReturnValue(false);
+					thisArg.getNodeParameter.calledWith('expire', 0, false).mockReturnValue(false);
+					mockClient.lPush.mockRejectedValue(new Error('Redis error'));
+
+					await expect(node.execute.call(thisArg)).rejects.toThrow(NodeOperationError);
+
+					expect(mockClient.lPush).toHaveBeenCalled();
+					expect(mockClient.quit).toHaveBeenCalled();
+				});
+			});
 		});
 	});
 });
