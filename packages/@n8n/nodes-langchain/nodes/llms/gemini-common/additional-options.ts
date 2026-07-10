@@ -1,11 +1,23 @@
 import type { HarmBlockThreshold, HarmCategory } from '@google/genai';
-import type { INodeProperties } from 'n8n-workflow';
+import type { INodeProperties, INodePropertyOptions } from 'n8n-workflow';
 
 import { harmCategories, harmThresholds } from './safety-options';
 
+// Ordered by increasing reasoning depth (not alphabetically). Values are the
+// lowercase strings the generateContent API expects for thinkingConfig.thinkingLevel.
+// Empty value means "don't send thinkingLevel", leaving the model's default untouched.
+const thinkingLevelOptions: INodePropertyOptions[] = [
+	{ name: 'Default (Model Decides)', value: '' },
+	{ name: 'Minimal', value: 'minimal' },
+	{ name: 'Low', value: 'low' },
+	{ name: 'Medium', value: 'medium' },
+	{ name: 'High', value: 'high' },
+];
+
 export function getAdditionalOptions({
 	supportsThinkingBudget,
-}: { supportsThinkingBudget: boolean }) {
+	supportsThinkingLevel = false,
+}: { supportsThinkingBudget: boolean; supportsThinkingLevel?: boolean }) {
 	const baseOptions: INodeProperties = {
 		displayName: 'Options',
 		name: 'options',
@@ -101,6 +113,19 @@ export function getAdditionalOptions({
 				minValue: -1,
 				numberPrecision: 0,
 			},
+		});
+	}
+	// Mutually exclusive with Thinking Budget: the Gemini API rejects (400) a
+	// request that sets both. Nodes therefore enable one or the other, not both.
+	if (supportsThinkingLevel) {
+		baseOptions.options?.push({
+			displayName: 'Thinking Level',
+			name: 'thinkingLevel',
+			default: '',
+			description:
+				"Controls the depth of the model's internal reasoning before it answers. Applies to Gemini 3.x models; other models will reject it. Leave as Default to use the model's built-in behavior.",
+			type: 'options',
+			options: thinkingLevelOptions,
 		});
 	}
 	return baseOptions;

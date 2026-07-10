@@ -113,7 +113,7 @@ export class LmChatGoogleVertex implements INodeType {
 				},
 			},
 			vertexLocationField,
-			getAdditionalOptions({ supportsThinkingBudget: true }),
+			getAdditionalOptions({ supportsThinkingBudget: true, supportsThinkingLevel: false }),
 		],
 	};
 
