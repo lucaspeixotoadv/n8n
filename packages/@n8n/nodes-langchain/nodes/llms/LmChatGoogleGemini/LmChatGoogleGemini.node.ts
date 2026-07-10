@@ -1,5 +1,5 @@
 import type { SafetySetting } from '@google/generative-ai';
-import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
+import { ChatGoogleGenerativeAI, type GoogleGenerativeAIChatInput } from '@langchain/google-genai';
 import { NodeConnectionTypes } from 'n8n-workflow';
 import type {
 	NodeError,
@@ -143,9 +143,10 @@ export class LmChatGoogleGemini implements INodeType {
 					},
 				},
 			},
-			// thinking budget not supported in @langchain/google-genai
-			// as it utilises the old google generative ai SDK
-			getAdditionalOptions({ supportsThinkingBudget: false }),
+			// thinking budget not supported in @langchain/google-genai as it utilises
+			// the old google generative ai SDK; thinking level is forwarded verbatim
+			// via thinkingConfig, so we expose the level control instead
+			getAdditionalOptions({ supportsThinkingBudget: false, supportsThinkingLevel: true }),
 		],
 	};
 
@@ -163,6 +164,7 @@ export class LmChatGoogleGemini implements INodeType {
 			temperature: number;
 			topK: number;
 			topP: number;
+			thinkingLevel?: string;
 		};
 
 		const safetySettings = this.getNodeParameter(
@@ -171,7 +173,7 @@ export class LmChatGoogleGemini implements INodeType {
 			null,
 		) as SafetySetting[];
 
-		const model = new ChatGoogleGenerativeAI({
+		const modelConfig: GoogleGenerativeAIChatInput = {
 			apiKey: credentials.apiKey as string,
 			baseUrl: credentials.host as string,
 			model: modelName,
@@ -182,7 +184,22 @@ export class LmChatGoogleGemini implements INodeType {
 			safetySettings,
 			callbacks: [new N8nLlmTracing(this, { errorDescriptionMapper })],
 			onFailedAttempt: makeN8nLlmFailedAttemptHandler(this),
-		});
+		};
+
+		// Only attach thinkingConfig when the user picked an explicit level, so the
+		// model's default thinking behavior is untouched otherwise. The lowercase
+		// value is forwarded verbatim to the generateContent API, which validates it
+		// against the model. The cast just satisfies the library's (stricter, upper
+		// case) type; the API is the source of truth for accepted values.
+		if (options.thinkingLevel) {
+			modelConfig.thinkingConfig = {
+				thinkingLevel: options.thinkingLevel as NonNullable<
+					GoogleGenerativeAIChatInput['thinkingConfig']
+				>['thinkingLevel'],
+			};
+		}
+
+		const model = new ChatGoogleGenerativeAI(modelConfig);
 
 		return {
 			response: model,
