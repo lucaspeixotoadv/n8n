@@ -23,6 +23,8 @@ type TokenUsageResult = {
 	totalTokens: number;
 	/** Cost may be undefined when the provider returns token counts but no pricing fields. */
 	cost?: number;
+	/** Prompt-caching tokens served from cache, for providers that report them. */
+	cacheReadInputTokens?: number;
 };
 
 /** Raw provider tokenUsage payload. Some providers report `totalCost` instead of `cost`. */
@@ -136,6 +138,11 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 		// but just in case, we set the index to the length of the runsMap
 		const runDetails = this.runsMap[runId] ?? { index: Object.keys(this.runsMap).length };
 
+		// Parse usage before stripping the generations down to text/generationInfo:
+		// some providers (e.g. Google Gemini) report token usage only on the
+		// generation message's usage_metadata, which the stripping removes.
+		const tokenUsage = this.options.tokensUsageParser(output);
+
 		output.generations = output.generations.map((gen) =>
 			gen.map((g) => pick(g, ['text', 'generationInfo'])),
 		);
@@ -145,7 +152,6 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 			promptTokens: 0,
 			totalTokens: 0,
 		};
-		const tokenUsage = this.options.tokensUsageParser(output);
 
 		if (output.generations.length > 0) {
 			tokenUsageEstimate.completionTokens = await this.estimateTokensFromGeneration(

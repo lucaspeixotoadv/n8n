@@ -850,6 +850,40 @@ describe('N8nLlmTracing', () => {
 				},
 			});
 		});
+
+		it('should call the parser before generations are stripped down to text/generationInfo', async () => {
+			// Providers like Google Gemini only report usage (incl. cached tokens)
+			// on the generation message, which handleLLMEnd strips from the output
+			// payload — the parser must run first to still see it.
+			let messageSeenByParser: unknown;
+			const customParser = vi.fn().mockImplementation((result: LLMResult) => {
+				messageSeenByParser = (result.generations[0][0] as { message?: unknown }).message;
+				return { completionTokens: 1, promptTokens: 1, totalTokens: 2 };
+			});
+
+			const tracer = new N8nLlmTracing(mockExecutionFunctions, {
+				tokensUsageParser: customParser,
+			});
+
+			const runId = 'run-123';
+			tracer.runsMap[runId] = {
+				index: 0,
+				messages: ['Test'],
+				options: {},
+			};
+
+			const message = { usage_metadata: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } };
+			const output: LLMResult = {
+				generations: [[{ text: 'Response', message } as unknown as LLMResult['generations'][0][0]]],
+			};
+
+			await tracer.handleLLMEnd(output, runId);
+
+			expect(messageSeenByParser).toBe(message);
+			// The stripped payload sent downstream must not contain the message
+			const callArgs = mockExecutionFunctions.addOutputData.mock.calls[0] as any;
+			expect(callArgs[2][0][0].json.response.generations[0][0]).not.toHaveProperty('message');
+		});
 	});
 
 	describe('tracing metadata', () => {
