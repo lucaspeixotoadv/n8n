@@ -1,6 +1,6 @@
 import { XataChatMessageHistory } from '@langchain/community/stores/message/xata';
 import { BaseClient } from '@xata.io/client';
-import { BufferMemory, BufferWindowMemory } from '@langchain/classic/memory';
+import { BufferMemory } from '@langchain/classic/memory';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import type {
 	ISupplyDataFunctions,
@@ -19,6 +19,7 @@ import {
 	expressionSessionKeyProperty,
 	scopedSessionHint,
 } from '../descriptions';
+import { TurnAwareBufferWindowMemory } from '../TurnAwareBufferWindowMemory';
 
 export class MemoryXata implements INodeType {
 	description: INodeTypeDescription = {
@@ -138,7 +139,7 @@ export class MemoryXata implements INodeType {
 			apiKey: credentials.apiKey as string,
 		});
 
-		const memClass = this.getNode().typeVersion < 1.3 ? BufferMemory : BufferWindowMemory;
+		const memClass = this.getNode().typeVersion < 1.3 ? BufferMemory : TurnAwareBufferWindowMemory;
 		const kOptions =
 			this.getNode().typeVersion < 1.3
 				? {}
