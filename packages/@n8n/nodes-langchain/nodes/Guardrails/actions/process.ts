@@ -46,6 +46,9 @@ export async function process(
 	const systemMessage = customizeSystemMessage
 		? (this.getNodeParameter('systemMessage', itemIndex) as string)
 		: undefined;
+	const includeReason =
+		operation === 'classify' &&
+		(this.getNodeParameter('includeViolationReason', itemIndex, false) as boolean);
 	const failedChecks: GuardrailUserResult[] = [];
 	const passedChecks: GuardrailUserResult[] = [];
 
@@ -144,6 +147,7 @@ export async function process(
 					prompt: prompt?.trim() || JAILBREAK_PROMPT,
 					threshold,
 					systemMessage,
+					includeReason,
 				}),
 			});
 		}
@@ -157,6 +161,7 @@ export async function process(
 					prompt: prompt?.trim() || NSFW_SYSTEM_PROMPT,
 					threshold,
 					systemMessage,
+					includeReason,
 				}),
 			});
 		}
@@ -170,6 +175,7 @@ export async function process(
 					prompt: prompt?.trim() || TOPICAL_ALIGNMENT_SYSTEM_PROMPT,
 					systemMessage,
 					threshold,
+					includeReason,
 				}),
 			});
 		}
@@ -184,6 +190,7 @@ export async function process(
 						prompt,
 						threshold,
 						systemMessage,
+						includeReason,
 					}),
 				});
 			}
