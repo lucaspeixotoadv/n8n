@@ -8,6 +8,8 @@ export interface GuardrailResult<TInfo extends Record<string, unknown> = Record<
 	tripwireTriggered: boolean;
 	/** The confidence score of the guardrail. */
 	confidenceScore?: number;
+	/** Model-provided explanation of why the guardrail was violated. */
+	reason?: string;
 	/** True if the guardrail failed to execute properly. */
 	executionFailed?: boolean;
 	/** The original exception if execution failed. */
@@ -25,6 +27,7 @@ export type LLMConfig = {
 	systemMessage?: string;
 	prompt: string;
 	threshold: number;
+	includeReason?: boolean;
 };
 
 export type CheckFn<TInfo extends Record<string, unknown> = Record<string, unknown>> = (
@@ -88,6 +91,7 @@ export interface GuardrailUserResult {
 	name: string;
 	triggered: boolean;
 	confidenceScore?: number;
+	reason?: string;
 	executionFailed?: boolean;
 	exception?: {
 		name: string;

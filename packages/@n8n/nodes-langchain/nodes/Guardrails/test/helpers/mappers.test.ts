@@ -36,6 +36,36 @@ describe('mappers helper', () => {
 			});
 		});
 
+		it('should map the reason of a triggered GuardrailResult to GuardrailUserResult', () => {
+			const result: GuardrailResult = {
+				guardrailName: 'custom-policy',
+				tripwireTriggered: true,
+				confidenceScore: 0.9,
+				reason: 'The input violates the policy',
+				executionFailed: false,
+				info: {},
+			};
+
+			expect(mapGuardrailResultToUserResult(result)).toEqual({
+				name: 'custom-policy',
+				triggered: true,
+				confidenceScore: 0.9,
+				reason: 'The input violates the policy',
+				executionFailed: false,
+				exception: undefined,
+				info: {},
+			});
+
+			const fulfilled: PromiseFulfilledResult<GuardrailResult> = {
+				status: 'fulfilled',
+				value: result,
+			};
+
+			expect(mapGuardrailResultToUserResult(fulfilled).reason).toBe(
+				'The input violates the policy',
+			);
+		});
+
 		it('should map a GuardrailResult with exception to GuardrailUserResult', () => {
 			const error = new Error('Test error');
 			const result: GuardrailResult = {
