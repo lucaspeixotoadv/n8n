@@ -196,6 +196,7 @@ describe('Guardrails Process', () => {
 			operation: 'classify',
 			customizeSystemMessage: true,
 			systemMessage: 'SYS',
+			includeViolationReason: true,
 			guardrails: {
 				pii: { value: { entities: ['EMAIL'] } },
 				customRegex: { regex: 'foo.*' },
@@ -265,30 +266,35 @@ describe('Guardrails Process', () => {
 			prompt: 'DEFAULT_JAILBREAK',
 			threshold: 0.2,
 			systemMessage: 'SYS',
+			includeReason: true,
 		});
 		expect(createNSFWCheckFn).toHaveBeenCalledWith({
 			model,
 			prompt: 'DEFAULT_NSFW',
 			threshold: 0.3,
 			systemMessage: 'SYS',
+			includeReason: true,
 		});
 		expect(createTopicalAlignmentCheckFn).toHaveBeenCalledWith({
 			model,
 			prompt: 'DEFAULT_TOPICAL',
 			systemMessage: 'SYS',
 			threshold: 0.4,
+			includeReason: true,
 		});
 		expect(createLLMCheckFn).toHaveBeenNthCalledWith(1, 'c1', {
 			model,
 			prompt: 'P1',
 			threshold: 0.1,
 			systemMessage: 'SYS',
+			includeReason: true,
 		});
 		expect(createLLMCheckFn).toHaveBeenNthCalledWith(2, 'c2', {
 			model,
 			prompt: 'P2',
 			threshold: 0.2,
 			systemMessage: 'SYS',
+			includeReason: true,
 		});
 	});
 });

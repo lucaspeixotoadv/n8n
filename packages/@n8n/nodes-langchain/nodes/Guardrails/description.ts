@@ -379,6 +379,20 @@ export const propertiesDescription: INodeProperties[] = [
 		],
 	},
 	{
+		displayName: 'Include Violation Reason',
+		name: 'includeViolationReason',
+		description:
+			'Whether model-based guardrails should explain why the text was flagged. The explanation is returned in the "reason" field of each violated check.',
+		hint: 'If you customize the system message, make sure it instructs the model to return the "reason" field when flagging a violation',
+		type: 'boolean',
+		default: false,
+		displayOptions: {
+			show: {
+				'/operation': ['classify'],
+			},
+		},
+	},
+	{
 		displayName: 'Customize System Message',
 		name: 'customizeSystemMessage',
 		description:
