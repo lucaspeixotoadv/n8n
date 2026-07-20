@@ -14,6 +14,7 @@ export const mapGuardrailResultToUserResult = (
 				name: result.value.guardrailName,
 				triggered: result.value.tripwireTriggered,
 				confidenceScore: result.value.confidenceScore,
+				reason: result.value.reason,
 				executionFailed: result.value.executionFailed,
 				exception: result.value.originalException
 					? {
@@ -42,6 +43,7 @@ export const mapGuardrailResultToUserResult = (
 		name: result.guardrailName,
 		triggered: result.tripwireTriggered,
 		confidenceScore: result.confidenceScore,
+		reason: result.reason,
 		executionFailed: result.executionFailed,
 		exception: result.originalException
 			? {
