@@ -28,12 +28,20 @@ async function loadWindow(messages: BaseMessage[], k: number): Promise<BaseMessa
 }
 
 /**
- * Mirrors the ordering rule enforced by the Gemini API: a tool (function
- * response) message is only valid immediately after the AI message that
- * issued the matching tool call.
+ * Mirrors the turn ordering enforced by the Gemini API: a tool call may only
+ * follow a user turn or a tool response, and a tool response may only follow
+ * the AI message that issued the matching call.
  */
 function expectValidToolOrdering(messages: BaseMessage[]) {
 	messages.forEach((message, i) => {
+		const isToolCall = isAIMessage(message) && (message.tool_calls?.length ?? 0) > 0;
+		if (isToolCall) {
+			expect(i).toBeGreaterThan(0);
+			const previous = messages[i - 1];
+			expect(previous.getType() === 'human' || previous.getType() === 'tool').toBe(true);
+			return;
+		}
+
 		if (message.getType() !== 'tool') return;
 		const toolCallId = (message as ToolMessage).tool_call_id;
 		let head = i;
@@ -46,30 +54,53 @@ function expectValidToolOrdering(messages: BaseMessage[]) {
 }
 
 describe('findSafeWindowStart', () => {
-	it('keeps the start when it does not land on a tool response', () => {
+	it('keeps the start when it does not land inside a tool-use cycle', () => {
 		const messages = [human('a'), ai('b'), human('c'), ai('d')];
 		expect(findSafeWindowStart(messages, 2)).toBe(2);
 		expect(findSafeWindowStart(messages, 0)).toBe(0);
 	});
 
-	it('extends backwards to include the tool call issuing an orphaned response', () => {
+	it('extends backwards to the user turn that triggered an orphaned response', () => {
 		const messages = [human('a'), toolCall('1'), toolResult('1'), ai('b')];
-		expect(findSafeWindowStart(messages, 2)).toBe(1);
+		expect(findSafeWindowStart(messages, 2)).toBe(0);
+	});
+
+	it('extends backwards to the user turn when the start lands on the tool call itself', () => {
+		const messages = [human('a'), toolCall('1'), toolResult('1'), ai('b')];
+		expect(findSafeWindowStart(messages, 1)).toBe(0);
 	});
 
 	it('walks back over consecutive responses from parallel tool calls', () => {
 		const messages = [human('a'), toolCall('1', '2'), toolResult('1'), toolResult('2'), ai('b')];
-		expect(findSafeWindowStart(messages, 3)).toBe(1);
+		expect(findSafeWindowStart(messages, 3)).toBe(0);
+	});
+
+	it('walks back over several cycles triggered by the same user turn', () => {
+		const messages = [
+			human('a'),
+			toolCall('1'),
+			toolResult('1'),
+			toolCall('2'),
+			toolResult('2'),
+			ai('b'),
+		];
+		expect(findSafeWindowStart(messages, 3)).toBe(0);
+		expect(findSafeWindowStart(messages, 4)).toBe(0);
 	});
 
 	it('moves forward past tool responses that have no matching call', () => {
 		const messages = [human('a'), toolResult('1'), toolResult('2'), ai('b'), human('c'), ai('d')];
 		expect(findSafeWindowStart(messages, 2)).toBe(3);
 	});
+
+	it('moves forward when the history itself opens mid-cycle', () => {
+		const messages = [toolCall('1'), toolResult('1'), ai('b'), human('c'), ai('d')];
+		expect(findSafeWindowStart(messages, 1)).toBe(2);
+	});
 });
 
 describe('TurnAwareBufferWindowMemory', () => {
-	it('behaves like the upstream slice when no pair is split', async () => {
+	it('behaves like the upstream slice when no cycle is cut', async () => {
 		const messages = [human('q1'), ai('a1'), human('q2'), ai('a2'), human('q3'), ai('a3')];
 		const window = await loadWindow(messages, 2);
 		expect(window.map((m) => m.content)).toEqual(['q2', 'a2', 'q3', 'a3']);
@@ -88,7 +119,28 @@ describe('TurnAwareBufferWindowMemory', () => {
 		const messages = [human('q1'), toolCall('call_1'), toolResult('call_1'), ai('a1')];
 		const window = await loadWindow(messages, 1);
 
-		expect(window.map((m) => m.getType())).toEqual(['ai', 'tool', 'ai']);
+		expect(window.map((m) => m.getType())).toEqual(['human', 'ai', 'tool', 'ai']);
+		expectValidToolOrdering(window);
+	});
+
+	it('never starts the window with a tool call', async () => {
+		// Regression: keeping the cycle intact by starting on the tool call turns
+		// the error above into its mirror image — Gemini rejects a history that
+		// opens with a function call with a 400 ("function call turn comes
+		// immediately after a user turn or after a function response turn")
+		const messages = [
+			human('q1'),
+			ai('a1'),
+			human('q2'),
+			toolCall('call_1'),
+			toolResult('call_1'),
+			ai('a2'),
+			human('q3'),
+		];
+		// k = 2 → slice would start exactly on the tool call
+		const window = await loadWindow(messages, 2);
+
+		expect(window.map((m) => m.getType())).toEqual(['human', 'ai', 'tool', 'ai', 'human']);
 		expectValidToolOrdering(window);
 	});
 
@@ -105,7 +157,24 @@ describe('TurnAwareBufferWindowMemory', () => {
 		// k = 1 → slice would start on the second tool response
 		const window = await loadWindow(messages, 1);
 
-		expect(window.map((m) => m.getType())).toEqual(['ai', 'tool', 'tool', 'ai']);
+		expect(window.map((m) => m.getType())).toEqual(['human', 'ai', 'tool', 'tool', 'ai']);
+		expectValidToolOrdering(window);
+	});
+
+	it('keeps several tool cycles of the same turn intact', async () => {
+		const messages = [
+			human('q1'),
+			ai('a1'),
+			human('q2'),
+			toolCall('call_1'),
+			toolResult('call_1'),
+			toolCall('call_2'),
+			toolResult('call_2'),
+			ai('a2'),
+		];
+		const window = await loadWindow(messages, 2);
+
+		expect(window.map((m) => m.getType())).toEqual(['human', 'ai', 'tool', 'ai', 'tool', 'ai']);
 		expectValidToolOrdering(window);
 	});
 
@@ -127,6 +196,7 @@ describe('TurnAwareBufferWindowMemory', () => {
 			const window = await loadWindow(messages, k);
 			expect(window.length).toBeGreaterThan(0);
 			expect(window[0].getType()).not.toBe('tool');
+			expect(isAIMessage(window[0]) && (window[0].tool_calls?.length ?? 0) > 0).toBe(false);
 			expectValidToolOrdering(window);
 		}
 	});
@@ -137,5 +207,19 @@ describe('TurnAwareBufferWindowMemory', () => {
 		const window = await loadWindow(messages, 2);
 
 		expect(window.map((m) => m.getType())).toEqual(['ai', 'human', 'ai']);
+	});
+
+	it('drops a leading cycle whose user turn is already gone from the history', async () => {
+		const messages = [
+			toolCall('lost_call'),
+			toolResult('lost_call'),
+			ai('a1'),
+			human('q2'),
+			ai('a2'),
+		];
+		const window = await loadWindow(messages, 2);
+
+		expect(window.map((m) => m.getType())).toEqual(['ai', 'human', 'ai']);
+		expectValidToolOrdering(window);
 	});
 });

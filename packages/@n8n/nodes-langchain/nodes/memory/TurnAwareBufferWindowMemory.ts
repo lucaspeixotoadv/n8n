@@ -1,48 +1,52 @@
 import { BufferWindowMemory } from '@langchain/classic/memory';
 import type { InputValues, MemoryVariables } from '@langchain/core/memory';
 import type { BaseMessage } from '@langchain/core/messages';
-import { getBufferString, isAIMessage } from '@langchain/core/messages';
+import { getBufferString } from '@langchain/core/messages';
 
-function isToolResponse(message: BaseMessage): boolean {
-	const type = message.getType();
-	return type === 'tool' || type === 'function';
-}
+import { isPartOfToolCycle, isToolCallRequest } from '@utils/messageTurns';
 
-function isToolCallRequest(message: BaseMessage): boolean {
-	return (
-		isAIMessage(message) &&
-		((message.tool_calls?.length ?? 0) > 0 || message.additional_kwargs?.function_call !== undefined)
-	);
+function isUserTurn(message: BaseMessage): boolean {
+	return message.getType() === 'human';
 }
 
 /**
- * Adjusts a context-window start index so the window never opens with a tool
- * response whose initiating tool call was cut off. Prefers extending the
- * window backwards to include the AI message that issued the call(s); if the
- * history has no such message (malformed), drops the orphaned responses by
- * moving the start forward to the next non-tool-response message.
+ * Adjusts a context-window start index so the window opens on a conversation
+ * turn boundary instead of in the middle of a tool-use cycle. When the
+ * requested start lands inside a cycle, the window is extended backwards to the
+ * user turn that triggered it, keeping the whole cycle replayable. If the
+ * history itself opens mid-cycle (truncated at the source, so there is no user
+ * turn to anchor it), the incomplete cycle is dropped by moving the start
+ * forward instead.
  */
 export function findSafeWindowStart(messages: BaseMessage[], start: number): number {
-	if (start <= 0 || !isToolResponse(messages[start])) return start;
+	if (start <= 0 || !isPartOfToolCycle(messages[start])) return start;
 
-	// Parallel tool calls produce several consecutive tool responses after a
-	// single AI message, so walk back over all of them.
-	let back = start;
-	while (back > 0 && isToolResponse(messages[back])) back--;
-	if (isToolCallRequest(messages[back])) return back;
+	// Walk back over the whole cycle region: parallel calls add several
+	// consecutive responses, and one user turn can trigger several cycles.
+	let cycleStart = start;
+	while (cycleStart > 0 && isPartOfToolCycle(messages[cycleStart - 1])) cycleStart--;
+
+	// The region is only replayable together with its user turn, and only if it
+	// really starts with the tool call rather than an already orphaned response.
+	const userTurn = cycleStart - 1;
+	if (userTurn >= 0 && isUserTurn(messages[userTurn]) && isToolCallRequest(messages[cycleStart])) {
+		return userTurn;
+	}
 
 	let forward = start;
-	while (forward < messages.length && isToolResponse(messages[forward])) forward++;
+	while (forward < messages.length && isPartOfToolCycle(messages[forward])) forward++;
 	return forward;
 }
 
 /**
  * Drop-in replacement for BufferWindowMemory with a turn-aware window
  * boundary. The upstream implementation slices the last `k * 2` messages by
- * count alone, which can split an AI tool-call message from its tool
- * response(s); providers such as Gemini reject a history that opens with an
- * unpaired tool response ("function response turn comes immediately after a
- * function call turn"). The boundary is adjusted so pairs are never split.
+ * count alone, which can cut a tool-use cycle in half. Providers such as Gemini
+ * validate turn order and reject a history that opens with an unpaired tool
+ * response ("function response turn comes immediately after a function call
+ * turn") just as much as one that opens with the tool call itself ("function
+ * call turn comes immediately after a user turn or after a function response
+ * turn"). The boundary is adjusted so cycles are never cut.
  */
 export class TurnAwareBufferWindowMemory extends BufferWindowMemory {
 	async loadMemoryVariables(_values: InputValues): Promise<MemoryVariables> {
