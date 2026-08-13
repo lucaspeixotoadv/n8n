@@ -1,4 +1,4 @@
-import { BufferMemory, BufferWindowMemory } from '@langchain/classic/memory';
+import { BufferMemory } from '@langchain/classic/memory';
 import { PostgresChatMessageHistory } from '@langchain/community/stores/message/postgres';
 import { logWrapper, getConnectionHintNoticeField } from '@n8n/ai-utilities';
 import { configurePostgres } from 'n8n-nodes-base/dist/nodes/Postgres/transport/index';
@@ -23,6 +23,7 @@ import {
 	expressionSessionKeyProperty,
 	scopedSessionHint,
 } from '../descriptions';
+import { TurnAwareBufferWindowMemory } from '../TurnAwareBufferWindowMemory';
 
 export class MemoryPostgresChat implements INodeType {
 	description: INodeTypeDescription = {
@@ -117,7 +118,7 @@ export class MemoryPostgresChat implements INodeType {
 			tableName,
 		});
 
-		const memClass = this.getNode().typeVersion < 1.1 ? BufferMemory : BufferWindowMemory;
+		const memClass = this.getNode().typeVersion < 1.1 ? BufferMemory : TurnAwareBufferWindowMemory;
 		const kOptions =
 			this.getNode().typeVersion < 1.1
 				? {}

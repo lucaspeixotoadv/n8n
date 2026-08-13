@@ -1,5 +1,4 @@
 import type { BufferWindowMemoryInput } from '@langchain/classic/memory';
-import { BufferWindowMemory } from '@langchain/classic/memory';
 import {
 	NodeConnectionTypes,
 	type INodeType,
@@ -18,13 +17,14 @@ import {
 	expressionSessionKeyProperty,
 	scopedSessionHint,
 } from '../descriptions';
+import { TurnAwareBufferWindowMemory } from '../TurnAwareBufferWindowMemory';
 
 class MemoryChatBufferSingleton {
 	private static instance: MemoryChatBufferSingleton;
 
 	private memoryBuffer: Map<
 		string,
-		{ buffer: BufferWindowMemory; created: Date; last_accessed: Date }
+		{ buffer: TurnAwareBufferWindowMemory; created: Date; last_accessed: Date }
 	>;
 
 	private constructor() {
@@ -41,14 +41,14 @@ class MemoryChatBufferSingleton {
 	async getMemory(
 		sessionKey: string,
 		memoryParams: BufferWindowMemoryInput,
-	): Promise<BufferWindowMemory> {
+	): Promise<TurnAwareBufferWindowMemory> {
 		await this.cleanupStaleBuffers();
 
 		let memoryInstance = this.memoryBuffer.get(sessionKey);
 		if (memoryInstance) {
 			memoryInstance.last_accessed = new Date();
 		} else {
-			const newMemory = new BufferWindowMemory(memoryParams);
+			const newMemory = new TurnAwareBufferWindowMemory(memoryParams);
 
 			memoryInstance = {
 				buffer: newMemory,
