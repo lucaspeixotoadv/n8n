@@ -1,4 +1,3 @@
-import { BufferWindowMemory } from '@langchain/classic/memory';
 import { MongoDBChatMessageHistory } from '@langchain/mongodb';
 import { logWrapper, getConnectionHintNoticeField } from '@n8n/ai-utilities';
 import { getSessionId } from '@utils/helpers';
@@ -19,6 +18,7 @@ import {
 	contextWindowLengthProperty,
 	scopedSessionHint,
 } from '../descriptions';
+import { TurnAwareBufferWindowMemory } from '../TurnAwareBufferWindowMemory';
 
 export class MemoryMongoDbChat implements INodeType {
 	description: INodeTypeDescription = {
@@ -146,7 +146,7 @@ export class MemoryMongoDbChat implements INodeType {
 				sessionId,
 			});
 
-			const memory = new BufferWindowMemory({
+			const memory = new TurnAwareBufferWindowMemory({
 				memoryKey: 'chat_history',
 				chatHistory: mongoDBChatHistory,
 				returnMessages: true,

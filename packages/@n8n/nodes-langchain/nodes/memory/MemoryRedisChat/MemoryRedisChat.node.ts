@@ -1,6 +1,6 @@
 import type { RedisChatMessageHistoryInput } from '@langchain/redis';
 import { RedisChatMessageHistory } from '@langchain/redis';
-import { BufferMemory, BufferWindowMemory } from '@langchain/classic/memory';
+import { BufferMemory } from '@langchain/classic/memory';
 import {
 	NodeOperationError,
 	type INodeType,
@@ -22,6 +22,7 @@ import {
 	expressionSessionKeyProperty,
 	scopedSessionHint,
 } from '../descriptions';
+import { TurnAwareBufferWindowMemory } from '../TurnAwareBufferWindowMemory';
 
 export class MemoryRedisChat implements INodeType {
 	description: INodeTypeDescription = {
@@ -160,7 +161,7 @@ export class MemoryRedisChat implements INodeType {
 		}
 		const redisChatHistory = new RedisChatMessageHistory(redisChatConfig);
 
-		const memClass = this.getNode().typeVersion < 1.3 ? BufferMemory : BufferWindowMemory;
+		const memClass = this.getNode().typeVersion < 1.3 ? BufferMemory : TurnAwareBufferWindowMemory;
 		const kOptions =
 			this.getNode().typeVersion < 1.3
 				? {}
