@@ -1,4 +1,4 @@
-import { AIMessage, HumanMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import type { ChatResult } from '@langchain/core/outputs';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { OperationalError } from 'n8n-workflow';
@@ -92,5 +92,54 @@ describe('N8nChatGoogleGenerativeAI', () => {
 
 		await expect(model._generate(messages, {} as never)).rejects.toThrow('API error');
 		expect(superGenerateSpy).toHaveBeenCalledTimes(1);
+	});
+
+	describe('turn order', () => {
+		// A history cut mid tool-use cycle, as context-window truncation produces it
+		const cutHistory = [
+			new AIMessage({
+				content: '',
+				tool_calls: [{ id: 'call_1', name: 'someTool', args: {}, type: 'tool_call' }],
+			}),
+			new ToolMessage({ content: 'result', tool_call_id: 'call_1', name: 'someTool' }),
+			new AIMessage('a1'),
+			new HumanMessage('q2'),
+		];
+
+		it('should drop an orphaned leading tool cycle before generating', async () => {
+			superGenerateSpy.mockResolvedValue(makeChatResult('STOP', 'Hello there'));
+
+			await model._generate(cutHistory, {} as never);
+
+			expect(superGenerateSpy).toHaveBeenCalledWith(
+				[cutHistory[2], cutHistory[3]],
+				expect.anything(),
+				undefined,
+			);
+		});
+
+		it('should drop an orphaned leading tool cycle before streaming', async () => {
+			const superStreamSpy = vi
+				.spyOn(ChatGoogleGenerativeAI.prototype, '_streamResponseChunks')
+				.mockImplementation(async function* () {});
+
+			for await (const _chunk of model._streamResponseChunks(cutHistory, {} as never)) {
+				// drain the stream
+			}
+
+			expect(superStreamSpy).toHaveBeenCalledWith(
+				[cutHistory[2], cutHistory[3]],
+				expect.anything(),
+				undefined,
+			);
+		});
+
+		it('should pass a valid history through untouched', async () => {
+			superGenerateSpy.mockResolvedValue(makeChatResult('STOP', 'Hello there'));
+
+			await model._generate(messages, {} as never);
+
+			expect(superGenerateSpy).toHaveBeenCalledWith(messages, expect.anything(), undefined);
+		});
 	});
 });
