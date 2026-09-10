@@ -1163,6 +1163,42 @@ export type DataTableProxyFunctions = {
 	getDataTableProxy?(dataTableId: string): Promise<IDataTableProjectService>;
 };
 
+/** What a tool call must tell the runtime to park itself under a correlation key. */
+export type CallbackWaitRegistration = {
+	/**
+	 * Endpoint identity the callback will arrive on. Scopes the correlation value, so the
+	 * same external id delivered to two different tools is two different waits.
+	 */
+	namespace: string;
+	/** The correlation id, already normalised to its string form by the caller. */
+	correlationValue: string;
+	executionId: string;
+	/** The tool call this wait belongs to, when the node runs as an agent tool. */
+	toolCallId?: string;
+	nodeId: string;
+	workflowId?: string;
+};
+
+/**
+ * Either the callback had already arrived (so the tool call resolves straight away and the
+ * execution never parks), or the wait is registered and the caller must park.
+ */
+export type CallbackWaitRegistrationResult =
+	| { status: 'resolved'; payload: IDataObject }
+	| { status: 'registered' };
+
+/** Runtime port implemented by the backend that owns callback correlation. */
+export type CallbackWaitProvider = {
+	registerWait(registration: CallbackWaitRegistration): Promise<CallbackWaitRegistrationResult>;
+};
+
+export type CallbackWaitFunctions = {
+	/** Absent when the runtime has no callback backend (e.g. a bare node test harness). */
+	registerCallbackWait?(
+		registration: CallbackWaitRegistration,
+	): Promise<CallbackWaitRegistrationResult>;
+};
+
 export type CredentialCheckStatus = {
 	credentialId: string;
 	credentialName: string;
@@ -1292,6 +1328,7 @@ export type IExecuteFunctions = ExecuteFunctions.GetNodeParameterFn &
 			FileSystemHelperFunctions &
 			SSHTunnelFunctions &
 			DataTableProxyFunctions &
+			CallbackWaitFunctions &
 			CredentialCheckProxyFunctions & {
 				normalizeItems(items: INodeExecutionData | INodeExecutionData[]): INodeExecutionData[];
 				constructExecutionMetaData(
@@ -3119,7 +3156,7 @@ export interface IWebhookDescription {
 	responseMode?: WebhookResponseMode | string;
 	responseData?: WebhookResponseData | string;
 	restartWebhook?: boolean;
-	nodeType?: 'webhook' | 'form' | 'mcp';
+	nodeType?: 'webhook' | 'form' | 'mcp' | 'toolCallback';
 	ndvHideUrl?: string | boolean; // If true the webhook will not be displayed in the editor
 	ndvHideMethod?: string | boolean; // If true the method will not be displayed in the editor
 }

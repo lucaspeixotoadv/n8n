@@ -137,6 +137,14 @@ export type PubSubCommandMap = {
 	};
 
 	/**
+	 * Ask mains to finish delivering callbacks that were claimed while the execution was
+	 * still running and could not be resumed yet.
+	 */
+	'deliver-pending-callbacks': {
+		executionId: string;
+	};
+
+	/**
 	 * Ask mains to abort a background job's live run. The job row is already
 	 * claimed as cancelled by the publisher; only the main holding the
 	 * in-process abort handle acts on this.

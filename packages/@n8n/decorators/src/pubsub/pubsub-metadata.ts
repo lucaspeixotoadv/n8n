@@ -27,6 +27,7 @@ export type PubSubEventName =
 	| 'relay-execution-lifecycle-event'
 	| 'relay-agent-execution-update'
 	| 'resume-agent-workflow-tool'
+	| 'deliver-pending-callbacks'
 	| 'relay-chat-stream-event'
 	| 'relay-instance-ai-event'
 	| 'relay-instance-ai-task-control'

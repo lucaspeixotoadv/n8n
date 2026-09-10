@@ -24,6 +24,7 @@ import { WorkflowStaticDataService } from '@/workflows/workflow-static-data.serv
 
 import { authAllowlistedNodes } from './constants';
 import { matchesExpectedNodeType } from './node-type-matcher';
+import { ToolCallbackWebhookRegistry } from './tool-callback-webhook-registry';
 import type { ExpectedWebhookNodeType } from './node-type-matcher';
 import { sanitizeWebhookRequest } from './webhook-request-sanitizer';
 import type {
@@ -49,6 +50,7 @@ export class LiveWebhooks implements IWebhookManager {
 		private readonly workflowsConfig: WorkflowsConfig,
 		private readonly workflowPublishedDataService: WorkflowPublishedDataService,
 		private readonly expressionEngineConfig: ExpressionEngineConfig,
+		private readonly toolCallbackWebhooks: ToolCallbackWebhookRegistry,
 	) {}
 
 	async getWebhookMethods(path: string) {
@@ -150,9 +152,18 @@ export class LiveWebhooks implements IWebhookManager {
 				.getNodeWebhooks(workflow, startNode as INode, additionalData)
 				.find((w) => w.httpMethod === httpMethod && w.path === webhook.webhookPath) as IWebhookData;
 
+			const declaredNodeType = webhookData?.webhookDescription.nodeType;
+
+			// A tool-callback endpoint resolves a tool call that is already suspended, so it
+			// never starts a workflow. It is served on the production webhook URL like any
+			// other node webhook, which is why it is routed here and dispatched by what the
+			// webhook declares rather than by node type.
+			const isToolCallback = declaredNodeType === 'toolCallback';
+
 			if (
+				!isToolCallback &&
 				expectedNodeType &&
-				!matchesExpectedNodeType(expectedNodeType, webhookData?.webhookDescription.nodeType)
+				!matchesExpectedNodeType(expectedNodeType, declaredNodeType)
 			) {
 				throw new WebhookNotFoundError(
 					{ path, httpMethod, webhookMethods: await this.getWebhookMethods(path) },
@@ -166,6 +177,17 @@ export class LiveWebhooks implements IWebhookManager {
 
 			if (workflowStartNode === null) {
 				throw new NotFoundError('Could not find node to process webhook.');
+			}
+
+			if (isToolCallback) {
+				return await this.toolCallbackWebhooks.handle({
+					workflow,
+					node: workflowStartNode,
+					webhookData,
+					additionalData,
+					req: request,
+					res: response,
+				});
 			}
 
 			if (!authAllowlistedNodes.has(workflowStartNode.type)) {
