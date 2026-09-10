@@ -4,7 +4,7 @@ import type { BaseMessage } from '@langchain/core/messages';
 import { AIMessage, HumanMessage, ToolMessage, trimMessages } from '@langchain/core/messages';
 import type { IDataObject, GenericValue } from 'n8n-workflow';
 
-import type { ToolCallData } from './types';
+import { isRedactedThinkingBlock, isThinkingBlock, type ToolCallData } from './types';
 
 /**
  * Extracts a string tool_call_id from various possible formats.
@@ -54,12 +54,50 @@ export function extractToolCallId(
 }
 
 /**
+ * Strips provider reasoning metadata from an AIMessage before it is persisted to
+ * memory: Gemini thought signatures (additional_kwargs) and Anthropic thinking
+ * blocks (content array).
+ *
+ * Both providers validate this metadata only for the turn that produced it. Gemini
+ * checks thought signatures on the current turn only, where the turn starts at the
+ * most recent user text message, and the live chain gets them from
+ * `steps[].action.messageLog` through `agent_scratchpad`, never from memory.
+ * Anthropic requires thinking blocks back within a tool-use turn and explicitly
+ * allows omitting prior turns'. Keeping them here only grows the stored history.
+ *
+ * Constraint: this assumes the `@langchain/google-genai` adapter, which supplies a
+ * placeholder signature for gemini-3 when one is absent. `@langchain/google-common`
+ * (Vertex) has no such fallback, so a Vertex history replayed from memory needs the
+ * `tool_call` and its signature kept together. DeepSeek's `reasoning_content` is
+ * left in place for the same reason.
+ */
+function stripReasoningMetadata(message: AIMessage): AIMessage {
+	const additionalKwargs = { ...message.additional_kwargs };
+	delete additionalKwargs.__gemini_function_call_thought_signatures__;
+	delete additionalKwargs.signatures;
+
+	const content = Array.isArray(message.content)
+		? message.content.filter((block) => !isThinkingBlock(block) && !isRedactedThinkingBlock(block))
+		: message.content;
+
+	return new AIMessage({
+		id: message.id,
+		content,
+		tool_calls: message.tool_calls,
+		additional_kwargs: additionalKwargs,
+	});
+}
+
+/**
  * Converts ToolCallData array into LangChain message sequence.
  * For sequential tool calls this produces alternating AIMessage (with tool_calls)
  * and ToolMessage pairs. For parallel tool calls, the shared AIMessage is emitted
  * once for the batch followed by one ToolMessage per call
  * (e.g. [AIMessage, ToolMessage, ToolMessage, …]), to avoid splitting a single
  * model turn into several consecutive AI messages.
+ *
+ * Provider reasoning metadata is dropped on the way in; see
+ * {@link stripReasoningMetadata} for why and for the adapter it assumes.
  *
  * @param steps - Array of tool call data with actions and observations
  * @returns Array of BaseMessage objects (AIMessage and ToolMessage pairs)
@@ -92,13 +130,35 @@ export function buildMessagesFromSteps(steps: ToolCallData[]): BaseMessage[] {
 		const toolCallId =
 			existingToolCallId ?? extractToolCallId(step.action.toolCallId, step.action.tool);
 
-		// Parallel tool calls share one AIMessage on the first step (with all tool_calls)
-		// and leave an empty messageLog on the rest. Emit the AIMessage when present;
-		// continuation steps (empty messageLog, i > 0) get only a ToolMessage to avoid
-		// splitting one model turn into several consecutive AI messages. Synthesize an
-		// AIMessage only for a first step lacking one, so its ToolMessage isn't orphaned.
+		// Parallel tool calls share one AIMessage on the first step (holding all
+		// tool_calls) and leave an empty messageLog on the continuation steps, which get
+		// only a ToolMessage so one model turn isn't split into several consecutive AI
+		// messages. The shared head keeps all of its tool_calls but is stripped of
+		// reasoning metadata; sequential calls are rebuilt clean, dropping it by
+		// construction. Content stays empty: the "Calling <tool> with input" narration
+		// taught Gemini to print pseudo-calls as text, which is why buildSteps stopped
+		// emitting it. Synthesize an AIMessage only for a first step lacking one, so its
+		// ToolMessage isn't orphaned.
 		if (existingAIMessage) {
-			messages.push(existingAIMessage);
+			const nextStep = steps[i + 1];
+			const isParallelBatchHead =
+				nextStep !== undefined && (nextStep.action.messageLog?.length ?? 0) === 0;
+
+			messages.push(
+				isParallelBatchHead
+					? stripReasoningMetadata(existingAIMessage)
+					: new AIMessage({
+							content: '',
+							tool_calls: [
+								{
+									id: toolCallId,
+									name: step.action.tool,
+									args: step.action.toolInput,
+									type: 'tool_call',
+								},
+							],
+						}),
+			);
 		} else if (i === 0) {
 			messages.push(
 				new AIMessage({
