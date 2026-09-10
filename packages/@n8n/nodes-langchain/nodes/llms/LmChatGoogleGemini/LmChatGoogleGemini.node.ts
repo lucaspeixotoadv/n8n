@@ -1,5 +1,5 @@
 import type { SafetySetting } from '@google/generative-ai';
-import { ChatGoogleGenerativeAI, type GoogleGenerativeAIChatInput } from '@langchain/google-genai';
+import { type GoogleGenerativeAIChatInput } from '@langchain/google-genai';
 import { NodeConnectionTypes } from 'n8n-workflow';
 import type {
 	NodeError,
@@ -11,6 +11,7 @@ import type {
 } from 'n8n-workflow';
 
 import { getAdditionalOptions } from '../gemini-common/additional-options';
+import { N8nChatGoogleGenerativeAI } from '../gemini-common/n8n-chat-google-generative-ai';
 import { geminiTokensUsageParser } from '../gemini-common/tokens-usage-parser';
 import {
 	makeN8nLlmFailedAttemptHandler,
@@ -205,7 +206,7 @@ export class LmChatGoogleGemini implements INodeType {
 			};
 		}
 
-		const model = new ChatGoogleGenerativeAI(modelConfig);
+		const model = new N8nChatGoogleGenerativeAI(modelConfig);
 
 		return {
 			response: model,
