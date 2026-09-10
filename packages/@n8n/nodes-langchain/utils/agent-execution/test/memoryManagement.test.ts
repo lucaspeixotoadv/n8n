@@ -531,7 +531,14 @@ describe('memoryManagement', () => {
 			const result = buildMessagesFromSteps(steps);
 
 			expect(result).toHaveLength(2);
-			expect(result[0]).toBe(aiMessage);
+			// Rebuilt for persistence rather than reusing the runtime message, so provider
+			// reasoning metadata never reaches memory.
+			expect(result[0]).not.toBe(aiMessage);
+			expect(result[0]).toBeInstanceOf(AIMessage);
+			expect(result[0].content).toBe('');
+			expect((result[0] as AIMessage).tool_calls).toEqual([
+				{ id: 'call-123', name: 'calculator', args: { expression: '2+2' }, type: 'tool_call' },
+			]);
 			expect(result[1]).toBeInstanceOf(ToolMessage);
 			expect(result[1].content).toBe('4');
 			expect((result[1] as ToolMessage).tool_call_id).toBe('call-123');
@@ -603,9 +610,11 @@ describe('memoryManagement', () => {
 			const result = buildMessagesFromSteps(steps);
 
 			expect(result).toHaveLength(4);
-			expect(result[0]).toBe(aiMessage1);
+			expect(result[0]).toBeInstanceOf(AIMessage);
+			expect((result[0] as AIMessage).tool_calls?.[0].id).toBe('call-1');
 			expect(result[1]).toBeInstanceOf(ToolMessage);
-			expect(result[2]).toBe(aiMessage2);
+			expect(result[2]).toBeInstanceOf(AIMessage);
+			expect((result[2] as AIMessage).tool_calls?.[0].id).toBe('call-2');
 			expect(result[3]).toBeInstanceOf(ToolMessage);
 		});
 
@@ -654,7 +663,7 @@ describe('memoryManagement', () => {
 			// Expected: [sharedAIMessage, ToolMessage(tool_a), ToolMessage(tool_b)]
 			// NOT a spurious second AIMessage for tool_b.
 			expect(result).toHaveLength(3);
-			expect(result[0]).toBe(sharedAIMessage);
+			expect(result[0]).toBeInstanceOf(AIMessage);
 			expect(result[1]).toBeInstanceOf(ToolMessage);
 			expect((result[1] as ToolMessage).tool_call_id).toBe('call-a');
 			expect((result[1] as ToolMessage).name).toBe('tool_a');
@@ -662,11 +671,86 @@ describe('memoryManagement', () => {
 			expect((result[2] as ToolMessage).tool_call_id).toBe('call-b');
 			expect((result[2] as ToolMessage).name).toBe('tool_b');
 
-			// The shared message retains its thought signatures untouched.
-			expect((result[0] as AIMessage).additional_kwargs).toEqual({
-				signatures: ['', 'sig-a', ''],
-				__gemini_function_call_thought_signatures__: { 'call-a': 'sig-a' },
+			// The batch head keeps every tool_call in one message so the model turn isn't
+			// split, but its thought signatures are dropped on the way into memory.
+			expect((result[0] as AIMessage).tool_calls?.map((tc) => tc.id)).toEqual(['call-a', 'call-b']);
+			expect((result[0] as AIMessage).additional_kwargs).toEqual({});
+		});
+
+		it('should drop Gemini thought signatures from a sequential tool call', () => {
+			const aiMessage = new AIMessage({
+				content: '',
+				tool_calls: [{ id: 'call-1', name: 'tool_a', args: {}, type: 'tool_call' }],
+				additional_kwargs: {
+					signatures: ['sig-a'],
+					__gemini_function_call_thought_signatures__: { 'call-1': 'sig-a' },
+				},
 			});
+
+			const steps: ToolCallData[] = [
+				{
+					action: {
+						tool: 'tool_a',
+						toolInput: {},
+						log: 'Calling tool_a',
+						messageLog: [aiMessage],
+						toolCallId: 'call-1',
+						type: 'tool_call',
+					},
+					observation: 'done',
+				},
+			];
+
+			const persisted = buildMessagesFromSteps(steps)[0] as AIMessage;
+
+			expect(persisted.additional_kwargs).toEqual({});
+			expect(persisted.tool_calls?.[0].id).toBe('call-1');
+		});
+
+		it('should drop Anthropic thinking blocks from a parallel batch head', () => {
+			const sharedAIMessage = new AIMessage({
+				content: [
+					{ type: 'thinking', thinking: 'internal reasoning', signature: 'sig' },
+					{ type: 'redacted_thinking', data: 'opaque' },
+					{ type: 'tool_use', id: 'call-a', name: 'tool_a', input: {} },
+				],
+				tool_calls: [
+					{ id: 'call-a', name: 'tool_a', args: {}, type: 'tool_call' },
+					{ id: 'call-b', name: 'tool_b', args: {}, type: 'tool_call' },
+				],
+			});
+
+			const steps: ToolCallData[] = [
+				{
+					action: {
+						tool: 'tool_a',
+						toolInput: {},
+						log: 'a',
+						messageLog: [sharedAIMessage],
+						toolCallId: 'call-a',
+						type: 'tool_call',
+					},
+					observation: 'a done',
+				},
+				{
+					action: {
+						tool: 'tool_b',
+						toolInput: {},
+						log: 'b',
+						messageLog: [],
+						toolCallId: 'call-b',
+						type: 'tool_call',
+					},
+					observation: 'b done',
+				},
+			];
+
+			const persisted = buildMessagesFromSteps(steps)[0] as AIMessage;
+
+			expect(persisted.content).toEqual([
+				{ type: 'tool_use', id: 'call-a', name: 'tool_a', input: {} },
+			]);
+			expect(persisted.tool_calls).toHaveLength(2);
 		});
 
 		it('should return empty array for empty steps', () => {
@@ -720,7 +804,8 @@ describe('memoryManagement', () => {
 			expect(savedMessages).toHaveLength(4);
 			expect(savedMessages[0]).toBeInstanceOf(HumanMessage);
 			expect(savedMessages[0].content).toBe('Calculate 2+2');
-			expect(savedMessages[1]).toBe(aiMessage);
+			expect(savedMessages[1]).toBeInstanceOf(AIMessage);
+			expect(savedMessages[1].tool_calls?.[0].id).toBe('call-123');
 			expect(savedMessages[2]).toBeInstanceOf(ToolMessage);
 			expect(savedMessages[3]).toBeInstanceOf(AIMessage);
 			expect(savedMessages[3].content).toBe('The answer is 4');
@@ -772,7 +857,12 @@ describe('memoryManagement', () => {
 			// Human, sharedAIMessage, ToolMessage(tool_a), ToolMessage(tool_b), final AIMessage
 			expect(savedMessages).toHaveLength(5);
 			expect(savedMessages[0]).toBeInstanceOf(HumanMessage);
-			expect(savedMessages[1]).toBe(sharedAIMessage);
+			expect(savedMessages[1]).toBeInstanceOf(AIMessage);
+			expect(savedMessages[1].tool_calls?.map((tc: { id: string }) => tc.id)).toEqual([
+				'call-a',
+				'call-b',
+			]);
+			expect(savedMessages[1].additional_kwargs).toEqual({});
 			expect(savedMessages[2]).toBeInstanceOf(ToolMessage);
 			expect(savedMessages[3]).toBeInstanceOf(ToolMessage);
 			expect(savedMessages[4]).toBeInstanceOf(AIMessage);
