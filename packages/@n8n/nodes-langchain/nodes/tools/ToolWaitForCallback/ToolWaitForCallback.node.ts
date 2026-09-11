@@ -2,9 +2,11 @@ import { getConnectionHintNoticeField } from '@n8n/ai-utilities';
 import { credentialsProperty } from 'n8n-nodes-base/dist/nodes/Webhook/description';
 import { WebhookAuthorizationError } from 'n8n-nodes-base/dist/nodes/Webhook/error';
 import {
+	checkRequestGates,
 	getResponseCode,
 	getResponseData,
 	validateWebhookAuthentication,
+	type RequestGateOptions,
 } from 'n8n-nodes-base/dist/nodes/Webhook/utils';
 import {
 	fromFunction,
@@ -129,23 +131,32 @@ export class ToolWaitForCallback implements INodeType {
 	};
 
 	/**
-	 * Authenticates the callback and shapes the tool result.
+	 * Gates the callback, authenticates it, and shapes the tool result.
 	 *
 	 * Returning only the body is the whole point of this method: headers and query stay
 	 * available to the correlation layer, which needs them, and never reach the model.
 	 */
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
+		const options = this.getNodeParameter('options', {}) as RequestGateOptions;
+
+		// One refusal for every gate and for wrong credentials alike, so a caller learns
+		// that it was refused and never which check refused it.
+		const refuse = (error: WebhookAuthorizationError): IWebhookResponseData => {
+			const response = this.getResponseObject();
+			response.writeHead(error.responseCode, { 'WWW-Authenticate': 'Basic realm="Webhook"' });
+			response.end(error.message);
+			return { noWebhookResponse: true };
+		};
+
+		// The shared order every endpoint keeps: address, then user agent, then credentials.
+		if (checkRequestGates(this.getRequestObject(), options) !== null) {
+			return refuse(new WebhookAuthorizationError(403));
+		}
+
 		try {
 			await validateWebhookAuthentication(this, AUTH_PROPERTY_NAME);
 		} catch (error) {
-			if (error instanceof WebhookAuthorizationError) {
-				const response = this.getResponseObject();
-				response.writeHead(error.responseCode, {
-					'WWW-Authenticate': 'Basic realm="Webhook"',
-				});
-				response.end(error.message);
-				return { noWebhookResponse: true };
-			}
+			if (error instanceof WebhookAuthorizationError) return refuse(error);
 			throw error;
 		}
 

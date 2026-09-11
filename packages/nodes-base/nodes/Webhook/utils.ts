@@ -1,6 +1,7 @@
 import { formatPemBlock } from '@n8n/utils/format-pem-block';
 import basicAuth from 'basic-auth';
 import { rm } from 'fs/promises';
+import isbot from 'isbot';
 import jwt from 'jsonwebtoken';
 import { recordConsumedAuth, WorkflowConfigurationError } from 'n8n-workflow';
 import type {
@@ -163,6 +164,37 @@ export const isIpAllowed = (
 
 	return false;
 };
+
+/** Options that gate a request before any authentication runs. */
+export type RequestGateOptions = {
+	ipWhitelist?: string | string[];
+	ignoreBots?: boolean;
+};
+
+/** What the request carries, narrowed to the fields the gates read. */
+export type GatedRequest = {
+	ips: string[];
+	ip?: string;
+	headers: { 'user-agent'?: string };
+};
+
+/**
+ * Which pre-authentication gate rejects this request, or `null` when it passes.
+ *
+ * Only the decision is shared, not the rejection: the status code, realm and message of a
+ * refusal differ by endpoint (a form answers `401` where a webhook answers `403`), so each
+ * caller writes its own response. What lives here is the order every endpoint must keep —
+ * address before user agent, and both before authentication, so a blocked caller never
+ * reaches the auth check.
+ */
+export function checkRequestGates(
+	req: GatedRequest,
+	options: RequestGateOptions,
+): 'ip' | 'bot' | null {
+	if (!isIpAllowed(options.ipWhitelist, req.ips, req.ip)) return 'ip';
+	if (options.ignoreBots && isbot(req.headers['user-agent'])) return 'bot';
+	return null;
+}
 
 const getAllowList = (allowlist: string[]) => {
 	const allowList = new BlockList();

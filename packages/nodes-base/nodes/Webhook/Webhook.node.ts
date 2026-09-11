@@ -1,7 +1,6 @@
 /* eslint-disable n8n-nodes-base/node-execute-block-wrong-error-thrown */
 import { createWriteStream } from 'fs';
 import { stat } from 'fs/promises';
-import isbot from 'isbot';
 import type {
 	IWebhookFunctions,
 	IDataObject,
@@ -35,7 +34,7 @@ import {
 	checkResponseModeConfiguration,
 	configuredOutputs,
 	handleFormData,
-	isIpAllowed,
+	checkRequestGates,
 	setupOutputConnection,
 	validateWebhookAuthentication,
 } from './utils';
@@ -234,7 +233,8 @@ export class Webhook extends Node {
 		const resp = context.getResponseObject();
 		const requestMethod = context.getRequestObject().method;
 
-		if (!isIpAllowed(options.ipWhitelist, req.ips, req.ip)) {
+		const rejectedBy = checkRequestGates(req, options);
+		if (rejectedBy === 'ip') {
 			resp.writeHead(403);
 			resp.end('IP is not allowed to access the webhook!');
 			return { noWebhookResponse: true };
@@ -242,8 +242,7 @@ export class Webhook extends Node {
 
 		let validationData: IDataObject | undefined;
 		try {
-			if (options.ignoreBots && isbot(req.headers['user-agent']))
-				throw new WebhookAuthorizationError(403);
+			if (rejectedBy === 'bot') throw new WebhookAuthorizationError(403);
 			if (context.getNodeParameter('authentication', 'none') === 'n8nOAuth2') {
 				// Two-step n8n user-auth flow: (1) validate the bearer token and resolve
 				// the caller to an n8n user, then (2) seed the execution context so the

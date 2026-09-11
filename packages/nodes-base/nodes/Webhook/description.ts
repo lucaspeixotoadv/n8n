@@ -293,6 +293,30 @@ export const responseBinaryPropertyNameProperty: INodeProperties = {
 };
 
 /**
+ * Pre-authentication request gates, shared by every node that serves a public endpoint.
+ * The decision behind them lives in `checkRequestGates`; each node keeps its own rejection
+ * response, because the status code, realm and message differ by endpoint.
+ */
+export const ignoreBotsOption: INodeProperties = {
+	displayName: 'Ignore Bots',
+	name: 'ignoreBots',
+	type: 'boolean',
+	default: false,
+	description: 'Whether to ignore requests from bots like link previewers and web crawlers',
+};
+
+/** @see ignoreBotsOption */
+export const ipWhitelistOption: INodeProperties = {
+	displayName: 'IP(s) Allowlist',
+	name: 'ipWhitelist',
+	type: 'string',
+	placeholder: 'e.g. 127.0.0.1, 192.168.1.0/24',
+	default: '',
+	description:
+		'Comma-separated list of allowed IP addresses or CIDR ranges. Leave empty to allow all IPs.',
+};
+
+/**
  * The response fields of a webhook that answers as soon as it receives the request.
  *
  * Declared apart from {@link optionsProperty} so a node that serves an endpoint without
@@ -417,13 +441,7 @@ export const optionsProperty: INodeProperties = {
 			description:
 				'The name of the output field to put any binary file data in. Only relevant if binary data is received.',
 		},
-		{
-			displayName: 'Ignore Bots',
-			name: 'ignoreBots',
-			type: 'boolean',
-			default: false,
-			description: 'Whether to ignore requests from bots like link previewers and web crawlers',
-		},
+		ignoreBotsOption,
 		{
 			displayName: 'Only Run If',
 			name: 'onlyRunIf',
@@ -434,15 +452,7 @@ export const optionsProperty: INodeProperties = {
 			description:
 				'Expression evaluated against the incoming request. The workflow will run only if the expression returns true. <code>$json</code> exposes the request as <code>{ body, headers, params, query }</code>. Requests that do not match receive a 200 response, without creating an execution. If the expression fails to evaluate, the request is allowed through and the error is logged.',
 		},
-		{
-			displayName: 'IP(s) Allowlist',
-			name: 'ipWhitelist',
-			type: 'string',
-			placeholder: 'e.g. 127.0.0.1, 192.168.1.0/24',
-			default: '',
-			description:
-				'Comma-separated list of allowed IP addresses or CIDR ranges. Leave empty to allow all IPs.',
-		},
+		ipWhitelistOption,
 		noResponseBodyOption,
 		{
 			displayName: 'Raw Body',

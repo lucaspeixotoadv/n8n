@@ -1,6 +1,8 @@
+import type { Response } from 'express';
 import type {
 	CallbackWaitRegistration,
 	FromAIArgument,
+	IDataObject,
 	IExecuteFunctions,
 	INode,
 	IWebhookDescription,
@@ -235,14 +237,34 @@ describe('ToolWaitForCallback', () => {
 	});
 
 	describe('webhook', () => {
-		it('returns the callback body and nothing else', async () => {
+		const makeWebhookContext = ({
+			options = {},
+			body = {},
+			userAgent = 'curl/8.4.0',
+			ip = '203.0.113.10',
+		}: {
+			options?: IDataObject;
+			body?: unknown;
+			userAgent?: string;
+			ip?: string;
+		} = {}) => {
+			const response = mock<Response>({ writeHead: vi.fn(), end: vi.fn() });
+
 			const ctx = mock<IWebhookFunctions>({
 				getNode: () => NODE,
-				getNodeParameter: (() => 'none') as never,
-				getBodyData: () => ({ id: 125, status: 'DONE' }),
+				getNodeParameter: ((name: string) => (name === 'options' ? options : 'none')) as never,
+				getBodyData: () => body as never,
 				getHeaderData: () => ({ authorization: 'secret' }),
 				getQueryData: () => ({ trace: 'abc' }),
+				getRequestObject: () => ({ ip, ips: [], headers: { 'user-agent': userAgent } }) as never,
+				getResponseObject: () => response as never,
 			});
+
+			return { ctx, response };
+		};
+
+		it('returns the callback body and nothing else', async () => {
+			const { ctx } = makeWebhookContext({ body: { id: 125, status: 'DONE' } });
 
 			const result = await node.webhook.call(ctx);
 
@@ -250,15 +272,79 @@ describe('ToolWaitForCallback', () => {
 		});
 
 		it('wraps a non-object body so the tool result stays an object', async () => {
-			const ctx = mock<IWebhookFunctions>({
-				getNode: () => NODE,
-				getNodeParameter: (() => 'none') as never,
-				getBodyData: () => 'plain text' as never,
-			});
+			const { ctx } = makeWebhookContext({ body: 'plain text' });
 
 			const result = await node.webhook.call(ctx);
 
 			expect(result.workflowData).toEqual([[{ json: { body: 'plain text' } }]]);
+		});
+
+		it('answers an address outside the allowlist without reading the callback', async () => {
+			const { ctx, response } = makeWebhookContext({
+				options: { ipWhitelist: '198.51.100.0/24' },
+				ip: '203.0.113.10',
+				body: { id: 125 },
+			});
+
+			const result = await node.webhook.call(ctx);
+
+			expect(result).toEqual({ noWebhookResponse: true });
+			expect(response.writeHead).toHaveBeenCalledWith(403, expect.anything());
+		});
+
+		it('serves an address inside the allowlist', async () => {
+			const { ctx } = makeWebhookContext({
+				options: { ipWhitelist: '203.0.113.0/24' },
+				ip: '203.0.113.10',
+				body: { id: 125 },
+			});
+
+			const result = await node.webhook.call(ctx);
+
+			expect(result.workflowData).toEqual([[{ json: { id: 125 } }]]);
+		});
+
+		it('answers a known crawler when the option is on', async () => {
+			const { ctx, response } = makeWebhookContext({
+				options: { ignoreBots: true },
+				userAgent: 'Googlebot/2.1 (+http://www.google.com/bot.html)',
+			});
+
+			const result = await node.webhook.call(ctx);
+
+			expect(result).toEqual({ noWebhookResponse: true });
+			expect(response.writeHead).toHaveBeenCalledWith(403, expect.anything());
+		});
+
+		it('serves a known crawler while the option is off', async () => {
+			const { ctx } = makeWebhookContext({
+				userAgent: 'Googlebot/2.1 (+http://www.google.com/bot.html)',
+				body: { id: 125 },
+			});
+
+			const result = await node.webhook.call(ctx);
+
+			expect(result.workflowData).toEqual([[{ json: { id: 125 } }]]);
+		});
+
+		// A caller must learn that it was refused, never which check refused it.
+		it('answers both gates exactly as it answers a credentials failure', async () => {
+			const blockedAddress = makeWebhookContext({
+				options: { ipWhitelist: '198.51.100.0/24' },
+				ip: '203.0.113.10',
+			});
+			const blockedAgent = makeWebhookContext({
+				options: { ignoreBots: true },
+				userAgent: 'Googlebot/2.1 (+http://www.google.com/bot.html)',
+			});
+
+			await node.webhook.call(blockedAddress.ctx);
+			await node.webhook.call(blockedAgent.ctx);
+
+			expect(blockedAgent.response.writeHead.mock.calls).toEqual(
+				blockedAddress.response.writeHead.mock.calls,
+			);
+			expect(blockedAgent.response.end.mock.calls).toEqual(blockedAddress.response.end.mock.calls);
 		});
 	});
 });

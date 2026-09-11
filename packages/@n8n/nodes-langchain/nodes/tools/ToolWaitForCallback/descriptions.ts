@@ -2,6 +2,8 @@ import type { INodeProperties } from 'n8n-workflow';
 import {
 	authenticationProperty,
 	httpMethodsProperty,
+	ignoreBotsOption,
+	ipWhitelistOption,
 	noResponseBodyOption,
 	onReceivedResponseDataOption,
 	responseCodeProperty,
@@ -73,7 +75,7 @@ export const callbackPathProperty: INodeProperties = {
 	default: '',
 	placeholder: 'e.g. order-status',
 	description:
-		"Path the callback endpoint listens on. Leave it empty to keep the endpoint generated for this node. Dynamic segments are written with ':', as in 'orders/:id'. An expression here is resolved when the workflow is published, so it cannot read data from a run.",
+		"Path the callback endpoint listens on. Leave it empty to keep the endpoint generated for this node. Dynamic segments are written with ':', as in 'orders/:orderId'. An expression here is resolved when the workflow is published, so it cannot read data from a run.",
 };
 
 /** Authentication for the callback endpoint, reusing the Webhook node's shared property. */
@@ -162,9 +164,14 @@ export const callbackResponseModeProperty: INodeProperties = {
 export const callbackResponseCodeProperty: INodeProperties = responseCodeProperty;
 
 /**
- * Response body and headers, the same parameters the Webhook node offers for a webhook that
- * answers on receipt. `getResponseData` and `WebhookResponseHeaders` read them, so there is
- * no second reading of these fields.
+ * The endpoint's options, every one of them the Webhook node's own property.
+ *
+ * `Ignore Bots` and `IP(s) Allowlist` gate the request before authentication, through the
+ * shared `checkRequestGates`. Response body and headers are read by `getResponseData` and
+ * `WebhookResponseHeaders`, so there is no second reading of those fields.
+ *
+ * The binary options stay out: they put bytes in `binary`, and the `ai_tool` channel carries
+ * JSON to a model, which has no representation for them.
  */
 export const callbackOptionsProperty: INodeProperties = {
 	displayName: 'Options',
@@ -172,7 +179,13 @@ export const callbackOptionsProperty: INodeProperties = {
 	type: 'collection',
 	placeholder: 'Add option',
 	default: {},
-	options: [noResponseBodyOption, onReceivedResponseDataOption, responseHeadersOption],
+	options: [
+		ignoreBotsOption,
+		ipWhitelistOption,
+		noResponseBodyOption,
+		onReceivedResponseDataOption,
+		responseHeadersOption,
+	],
 };
 
 export const callbackUrlNotice: INodeProperties = {
