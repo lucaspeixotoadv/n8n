@@ -13,7 +13,9 @@ export class CreateExecutionNodeRunTable1789089302769 implements ReversibleMigra
 	async up({ schemaBuilder: { createTable, column }, tablePrefix }: MigrationContext) {
 		await createTable(TABLE)
 			.withColumns(
-				column('executionId').varchar(36).primary.notNull,
+				// `execution_entity.id` is an integer, so the referencing column must be one too:
+				// Postgres refuses a foreign key between incompatible key types.
+				column('executionId').int.primary.notNull,
 				column('seq')
 					.int.primary.notNull.comment(
 						"Position in the execution's node-event order, monotonic across resumes",

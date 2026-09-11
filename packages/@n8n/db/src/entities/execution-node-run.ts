@@ -2,6 +2,7 @@ import { Column, Entity, Index, PrimaryColumn } from '@n8n/typeorm';
 import type { ITaskData } from 'n8n-workflow';
 
 import { DateTimeColumn, JsonColumn } from './abstract-entity';
+import { idStringifier } from '../utils/transformers';
 
 /**
  * One node run, appended the moment it finished.
@@ -17,7 +18,8 @@ import { DateTimeColumn, JsonColumn } from './abstract-entity';
 @Entity()
 @Index(['executionId', 'seq'])
 export class ExecutionNodeRun {
-	@PrimaryColumn({ type: 'varchar', length: 36 })
+	/** Stored as the integer `execution_entity.id`; carried as a string, as everywhere else. */
+	@PrimaryColumn({ transformer: idStringifier })
 	executionId: string;
 
 	/**
