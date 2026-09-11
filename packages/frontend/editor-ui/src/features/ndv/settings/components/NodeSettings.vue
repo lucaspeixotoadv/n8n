@@ -778,7 +778,7 @@ function handleSelectAction(params: INodeParameters) {
 					@parameter-blur="onParameterBlur"
 				>
 					<template v-if="webhookUrlAfterParameter" #afterParameter>
-						<NodeWebhooks :node="node" :node-type-description="nodeType" />
+						<NodeWebhooks :node="node" :node-type-description="nodeType" between-parameters />
 					</template>
 					<QuickConnectBanner
 						v-if="showQuickConnectBanner"
