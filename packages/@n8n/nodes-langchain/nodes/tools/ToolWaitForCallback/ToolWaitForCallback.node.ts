@@ -20,7 +20,7 @@ import {
 	webhookDescriptionFields,
 } from 'n8n-workflow';
 
-import { toCallbackPayload, toToolResult } from './callback-payload';
+import { toCallbackPayload, toToolResult, toWaitingRecord } from './callback-payload';
 import {
 	AUTH_PROPERTY_NAME,
 	callbackAuthenticationProperty,
@@ -74,6 +74,8 @@ export class ToolWaitForCallback implements INodeType {
 		group: ['transform'],
 		version: 1,
 		description: 'Suspend the agent until an external system calls back',
+		waitingNodeTooltip:
+			"Waiting for a callback on this node's URL. The execution resumes when a request arrives whose Callback Identifier matches the Wait Identifier this tool call registered — see the node's output for the identifier it is waiting on.",
 		defaults: { name: 'Wait for Callback' },
 		codex: {
 			categories: ['AI'],
@@ -177,7 +179,7 @@ export class ToolWaitForCallback implements INodeType {
 		// timeout would silently turn a slow external system into a wrong tool result.
 		await this.putExecutionToWait(WAIT_INDEFINITELY);
 
-		return [this.getInputData()];
+		return toWaitingRecord(correlationValue);
 	}
 }
 

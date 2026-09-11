@@ -106,6 +106,32 @@ describe('ToolWaitForCallback', () => {
 			expect(ctx.putExecutionToWait).toHaveBeenCalledWith(WAIT_INDEFINITELY);
 		});
 
+		it('records what it is parked on, so a waiting execution is inspectable', async () => {
+			const ctx = makeExecuteContext({
+				registerCallbackWait: vi.fn().mockResolvedValue({ status: 'registered' }),
+			});
+
+			// The engine discards this task on resume, so it never reaches the model — it is
+			// what an operator sees when opening the waiting (or cancelled) execution.
+			expect(await node.execute.call(ctx)).toEqual([
+				[{ json: { status: 'waitingForCallback', waitIdentifier: '125' } }],
+			]);
+		});
+
+		it('does not echo the model-supplied tool arguments while parked', async () => {
+			const ctx = makeExecuteContext({
+				registerCallbackWait: vi.fn().mockResolvedValue({ status: 'registered' }),
+			});
+
+			const [items] = await node.execute.call(ctx);
+
+			expect(items[0].json).not.toHaveProperty('toolCallId');
+		});
+
+		it('tells the canvas what the parked node is waiting for', () => {
+			expect(node.description.waitingNodeTooltip).toContain('Callback Identifier');
+		});
+
 		it('returns the parked callback body without parking, when one already arrived', async () => {
 			const ctx = makeExecuteContext({
 				registerCallbackWait: vi

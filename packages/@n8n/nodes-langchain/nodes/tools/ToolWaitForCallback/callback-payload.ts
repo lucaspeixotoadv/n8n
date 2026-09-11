@@ -19,3 +19,24 @@ export function toCallbackPayload(body: unknown): IDataObject {
 export function toToolResult(payload: IDataObject): INodeExecutionData[][] {
 	return [[{ json: payload }]];
 }
+
+/**
+ * What the node records as its output while it is parked.
+ *
+ * The engine discards this task the moment the execution resumes — the parked run is popped
+ * and replaced by the real callback body — so it never reaches the model. It exists purely
+ * so that opening a waiting (or later cancelled) execution shows what the tool call is
+ * actually blocked on, rather than an echo of the arguments the model passed in.
+ */
+export function toWaitingRecord(correlationValue: string): INodeExecutionData[][] {
+	return [
+		[
+			{
+				json: {
+					status: 'waitingForCallback',
+					waitIdentifier: correlationValue,
+				},
+			},
+		],
+	];
+}
