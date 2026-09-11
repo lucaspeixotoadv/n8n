@@ -1223,6 +1223,75 @@ describe('ExecutionPersistence', () => {
 				);
 			});
 
+			describe('preserveCancellation', () => {
+				it('writes the run data and keeps the cancellation when the row is canceled', async () => {
+					const executionPersistence = createPersistenceService('fs');
+					mockEntity('fs');
+					jsonStore.read.mockResolvedValue(existingBundle);
+
+					const mockTx = createMockTransaction();
+					mockTx.findOne.mockResolvedValue(mock<ExecutionEntity>({ status: 'canceled' }));
+					executionRepository.manager.transaction = createMockTx(mockTx);
+
+					const result = await executionPersistence.updateExistingExecution(
+						executionId,
+						{ data: runData, status: 'success', finished: true, stoppedAt: new Date() },
+						{ preserveCancellation: true },
+					);
+
+					// The engine's account of the run is the only one a cancelled execution has, so
+					// it lands; only the status columns give way.
+					expect(result).toBe(true);
+					expect(jsonStore.write).toHaveBeenCalled();
+					expect(mockTx.update).not.toHaveBeenCalledWith(
+						ExecutionEntity,
+						expect.anything(),
+						expect.objectContaining({ status: 'success' }),
+					);
+				});
+
+				it('writes status normally when the row is not canceled', async () => {
+					const executionPersistence = createPersistenceService('fs');
+					mockEntity('fs');
+					jsonStore.read.mockResolvedValue(existingBundle);
+
+					const mockTx = createMockTransaction();
+					mockTx.findOne.mockResolvedValue(mock<ExecutionEntity>({ status: 'running' }));
+					executionRepository.manager.transaction = createMockTx(mockTx);
+
+					await executionPersistence.updateExistingExecution(
+						executionId,
+						{ data: runData, status: 'success' },
+						{ preserveCancellation: true },
+					);
+
+					expect(mockTx.update).toHaveBeenCalledWith(
+						ExecutionEntity,
+						{ id: executionId },
+						expect.objectContaining({ status: 'success' }),
+					);
+				});
+
+				it('never rejects the write, unlike requireNotCanceled', async () => {
+					const executionPersistence = createPersistenceService('fs');
+					mockEntity('fs');
+					jsonStore.read.mockResolvedValue(existingBundle);
+
+					const mockTx = createMockTransaction();
+					mockTx.findOne.mockResolvedValue(mock<ExecutionEntity>({ status: 'canceled' }));
+					// A guarded write would match no row and abort; this one has no status guard.
+					executionRepository.manager.transaction = createMockTx(mockTx);
+
+					const result = await executionPersistence.updateExistingExecution(
+						executionId,
+						{ data: runData, status: 'success' },
+						{ preserveCancellation: true },
+					);
+
+					expect(result).toBe(true);
+				});
+			});
+
 			it('should strip immutable fields before updating the entity', async () => {
 				const executionPersistence = createPersistenceService('fs');
 				mockEntity('fs');

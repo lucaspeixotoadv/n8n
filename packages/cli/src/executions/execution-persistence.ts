@@ -789,6 +789,10 @@ export class ExecutionPersistence {
 		return await this.executionRepository.manager.transaction(async (tx) => {
 			const whereCondition = this.buildEntityWhereCondition(ref.executionId, conditions);
 
+			if (conditions?.preserveCancellation) {
+				await this.dropStatusColumnsIfCanceled(tx, ref.executionId, updatableColumns);
+			}
+
 			if (Object.keys(updatableColumns).length > 0) {
 				const result = await tx.update(ExecutionEntity, whereCondition, updatableColumns);
 				if ((result.affected ?? 0) === 0) return false;
@@ -885,6 +889,34 @@ export class ExecutionPersistence {
 	 * - **Computed locally**: `jsonSizeBytes` and `binaryDataSizeBytes` — derived from
 	 *   the persisted bundle / run data, never trusted from the caller.
 	 */
+	/**
+	 * Drops the status columns from a pending write when the row is already cancelled, so
+	 * the run data still lands while the user's cancellation stands.
+	 *
+	 * Runs inside the caller's transaction, and takes a write lock on Postgres so a
+	 * concurrent cancellation cannot slip between this read and the update. SQLite
+	 * serializes writers itself.
+	 */
+	private async dropStatusColumnsIfCanceled(
+		tx: EntityManager,
+		executionId: string,
+		updatableColumns: UpdatableEntityColumns,
+	): Promise<void> {
+		const lock =
+			this.databaseConfig.type === 'postgresdb' ? { mode: 'pessimistic_write' as const } : undefined;
+		const current = await tx.findOne(ExecutionEntity, {
+			where: { id: executionId },
+			select: ['id', 'status'],
+			lock,
+		});
+
+		if (current?.status !== 'canceled') return;
+
+		delete updatableColumns.status;
+		delete updatableColumns.finished;
+		delete updatableColumns.stoppedAt;
+	}
+
 	private pickUpdatableEntityColumns(
 		execution: Partial<IExecutionResponse>,
 	): UpdatableEntityColumns {

@@ -1,6 +1,6 @@
 import type { PushMessage } from '@n8n/api-types';
 import { Logger } from '@n8n/backend-common';
-import { mockInstance } from '@n8n/backend-test-utils';
+import { mockInstance, mockLogger } from '@n8n/backend-test-utils';
 import type { Project, User } from '@n8n/db';
 import { ExecutionRepository, UserRepository } from '@n8n/db';
 import { stringify } from 'flatted';
@@ -48,7 +48,8 @@ import {
 } from '../execution-lifecycle-hooks';
 
 describe('Execution Lifecycle Hooks', () => {
-	mockInstance(Logger);
+	// `scoped()` has to return a logger: services built by these hooks scope theirs.
+	mockInstance(Logger).scoped.mockReturnValue(mockLogger());
 	mockInstance(InstanceSettings);
 	const errorReporter = mockInstance(ErrorReporter);
 	const eventService = mockInstance(EventService);
@@ -609,9 +610,9 @@ describe('Execution Lifecycle Hooks', () => {
 
 			const { handlers } = lifecycleHooks;
 			expect(handlers.nodeExecuteBefore).toHaveLength(2);
-			expect(handlers.nodeExecuteAfter).toHaveLength(2);
+			expect(handlers.nodeExecuteAfter).toHaveLength(3);
 			expect(handlers.workflowExecuteBefore).toHaveLength(3);
-			expect(handlers.workflowExecuteAfter).toHaveLength(5);
+			expect(handlers.workflowExecuteAfter).toHaveLength(6);
 			expect(handlers.workflowExecuteResume).toHaveLength(0);
 			expect(handlers.nodeFetchedData).toHaveLength(1);
 			expect(handlers.sendResponse).toHaveLength(0);
@@ -622,7 +623,8 @@ describe('Execution Lifecycle Hooks', () => {
 			it('should send nodeExecuteBefore push event', async () => {
 				await lifecycleHooks.runHook('nodeExecuteBefore', [nodeName, taskStartedData]);
 
-				expect(push.send).toHaveBeenCalledWith(
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
 					{
 						type: 'nodeExecuteBefore',
 						data: { executionId, nodeName, sequenceNumber: 0, data: taskStartedData },
@@ -647,8 +649,8 @@ describe('Execution Lifecycle Hooks', () => {
 				): message is Extract<PushMessage, { type: 'nodeExecuteBefore' | 'nodeExecuteAfter' }> =>
 					message.type === 'nodeExecuteBefore' || message.type === 'nodeExecuteAfter';
 
-				const sequenceNumbers = push.send.mock.calls
-					.map(([message]) => message)
+				const sequenceNumbers = push.sendToExecution.mock.calls
+					.map(([, message]) => message)
 					.filter(isNodeEvent)
 					.map((message) => message.data.sequenceNumber);
 
@@ -691,8 +693,9 @@ describe('Execution Lifecycle Hooks', () => {
 
 				const { data: _, ...taskDataWithoutData } = mockTaskData;
 
-				expect(push.send).toHaveBeenNthCalledWith(
+				expect(push.sendToExecution).toHaveBeenNthCalledWith(
 					1,
+					executionId,
 					{
 						type: 'nodeExecuteAfter',
 						data: {
@@ -708,8 +711,9 @@ describe('Execution Lifecycle Hooks', () => {
 					pushRef,
 				);
 
-				expect(push.send).toHaveBeenNthCalledWith(
+				expect(push.sendToExecution).toHaveBeenNthCalledWith(
 					2,
+					executionId,
 					{
 						type: 'nodeExecuteAfterData',
 						data: {
@@ -730,7 +734,7 @@ describe('Execution Lifecycle Hooks', () => {
 				workflowData.settings = { saveExecutionProgress: true };
 				lifecycleHooks = createHooks();
 
-				expect(lifecycleHooks.handlers.nodeExecuteAfter).toHaveLength(3);
+				expect(lifecycleHooks.handlers.nodeExecuteAfter).toHaveLength(4);
 
 				await lifecycleHooks.runHook('nodeExecuteAfter', [nodeName, taskData, runExecutionData]);
 
@@ -746,7 +750,7 @@ describe('Execution Lifecycle Hooks', () => {
 				workflowData.settings = { saveExecutionProgress: false };
 				lifecycleHooks = createHooks();
 
-				expect(lifecycleHooks.handlers.nodeExecuteAfter).toHaveLength(2);
+				expect(lifecycleHooks.handlers.nodeExecuteAfter).toHaveLength(3);
 
 				await lifecycleHooks.runHook('nodeExecuteAfter', [nodeName, taskData, runExecutionData]);
 
@@ -790,15 +794,17 @@ describe('Execution Lifecycle Hooks', () => {
 				expect(options.user).toBeDefined();
 
 				// nodeExecuteAfter (metadata-only) is unaffected
-				expect(push.send).toHaveBeenNthCalledWith(
+				expect(push.sendToExecution).toHaveBeenNthCalledWith(
 					1,
+					executionId,
 					expect.objectContaining({ type: 'nodeExecuteAfter' }),
 					pushRef,
 				);
 
 				// nodeExecuteAfterData contains redacted data
-				expect(push.send).toHaveBeenNthCalledWith(
+				expect(push.sendToExecution).toHaveBeenNthCalledWith(
 					2,
+					executionId,
 					{
 						type: 'nodeExecuteAfterData',
 						data: {
@@ -852,12 +858,14 @@ describe('Execution Lifecycle Hooks', () => {
 					runExecutionData,
 				]);
 
-				expect(push.send).toHaveBeenCalledWith(
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
 					expect.objectContaining({ type: 'nodeExecuteAfter' }),
 					pushRef,
 				);
 
-				expect(push.send).not.toHaveBeenCalledWith(
+				expect(push.sendToExecution).not.toHaveBeenCalledWith(
+					executionId,
 					expect.objectContaining({ type: 'nodeExecuteAfterData' }),
 					pushRef,
 					true,
@@ -883,13 +891,15 @@ describe('Execution Lifecycle Hooks', () => {
 				]);
 
 				// nodeExecuteAfter (metadata-only) is still sent
-				expect(push.send).toHaveBeenCalledWith(
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
 					expect.objectContaining({ type: 'nodeExecuteAfter' }),
 					pushRef,
 				);
 
 				// nodeExecuteAfterData is NOT sent
-				expect(push.send).not.toHaveBeenCalledWith(
+				expect(push.sendToExecution).not.toHaveBeenCalledWith(
+					executionId,
 					expect.objectContaining({ type: 'nodeExecuteAfterData' }),
 					pushRef,
 					true,
@@ -903,7 +913,8 @@ describe('Execution Lifecycle Hooks', () => {
 			it('should send executionStarted push event', async () => {
 				await lifecycleHooks.runHook('workflowExecuteBefore', [workflow, runExecutionData]);
 
-				expect(push.send).toHaveBeenCalledWith(
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
 					{
 						type: 'executionStarted',
 						data: {
@@ -975,7 +986,8 @@ describe('Execution Lifecycle Hooks', () => {
 				expect(options.keepOriginal).toBe(true);
 				expect(options.user).toBeDefined();
 
-				expect(push.send).toHaveBeenCalledWith(
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
 					expect.objectContaining({
 						type: 'executionStarted',
 						data: expect.objectContaining({
@@ -992,7 +1004,8 @@ describe('Execution Lifecycle Hooks', () => {
 
 				await lifecycleHooks.runHook('workflowExecuteBefore', [workflow, runExecutionData]);
 
-				expect(push.send).toHaveBeenCalledWith(
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
 					expect.objectContaining({
 						type: 'executionStarted',
 						data: expect.objectContaining({
@@ -1008,7 +1021,8 @@ describe('Execution Lifecycle Hooks', () => {
 				await lifecycleHooks.runHook('workflowExecuteBefore', [workflow, runExecutionData]);
 
 				expect(redactionProxy.processExecution).not.toHaveBeenCalled();
-				expect(push.send).toHaveBeenCalledWith(
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
 					expect.objectContaining({
 						type: 'executionStarted',
 						data: expect.objectContaining({
@@ -1023,7 +1037,8 @@ describe('Execution Lifecycle Hooks', () => {
 		describe('workflowExecuteAfter', () => {
 			it('should send executionFinished push event', async () => {
 				await lifecycleHooks.runHook('workflowExecuteAfter', [successfulRun, {}]);
-				expect(push.send).toHaveBeenCalledWith(
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
 					{
 						type: 'executionFinished',
 						data: {
@@ -1039,7 +1054,8 @@ describe('Execution Lifecycle Hooks', () => {
 			it('should send executionWaiting push event', async () => {
 				await lifecycleHooks.runHook('workflowExecuteAfter', [waitingRun, {}]);
 
-				expect(push.send).toHaveBeenCalledWith(
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
 					{
 						type: 'executionWaiting',
 						data: { executionId },
@@ -1088,7 +1104,7 @@ describe('Execution Lifecycle Hooks', () => {
 							finished: true,
 							status: 'success',
 						}),
-						{ requireNotCanceled: true },
+						{ preserveCancellation: true },
 					);
 				});
 
@@ -1290,19 +1306,17 @@ describe('Execution Lifecycle Hooks', () => {
 				);
 			});
 
-			it('should not setup any push hooks', async () => {
-				const { handlers } = lifecycleHooks;
-				expect(handlers.nodeExecuteBefore).toHaveLength(1);
-				expect(handlers.nodeExecuteAfter).toHaveLength(1);
-				expect(handlers.workflowExecuteBefore).toHaveLength(2);
-				expect(handlers.workflowExecuteAfter).toHaveLength(4);
-
+			it('still reports the execution, addressed to it rather than to a session', async () => {
+				// A run nobody launched from an editor tab — a webhook, a schedule — is still
+				// observable by whoever opens it, so the events are emitted either way. With no
+				// originating session and nobody watching, sending them reaches nobody.
 				await lifecycleHooks.runHook('nodeExecuteBefore', [nodeName, taskStartedData]);
-				await lifecycleHooks.runHook('nodeExecuteAfter', [nodeName, taskData, runExecutionData]);
-				await lifecycleHooks.runHook('workflowExecuteBefore', [workflow, runExecutionData]);
-				await lifecycleHooks.runHook('workflowExecuteAfter', [successfulRun, {}]);
 
-				expect(push.send).not.toHaveBeenCalled();
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
+					expect.objectContaining({ type: 'nodeExecuteBefore' }),
+					undefined,
+				);
 			});
 		});
 	});
@@ -1334,7 +1348,7 @@ describe('Execution Lifecycle Hooks', () => {
 			expect(handlers.nodeExecuteBefore).toHaveLength(0);
 			expect(handlers.nodeExecuteAfter).toHaveLength(0);
 			expect(handlers.workflowExecuteBefore).toHaveLength(2);
-			expect(handlers.workflowExecuteAfter).toHaveLength(4);
+			expect(handlers.workflowExecuteAfter).toHaveLength(5);
 			expect(handlers.workflowExecuteResume).toHaveLength(0);
 			expect(handlers.nodeFetchedData).toHaveLength(0);
 			expect(handlers.sendResponse).toHaveLength(0);
@@ -1545,9 +1559,9 @@ describe('Execution Lifecycle Hooks', () => {
 
 			const { handlers } = lifecycleHooks;
 			expect(handlers.nodeExecuteBefore).toHaveLength(2);
-			expect(handlers.nodeExecuteAfter).toHaveLength(2);
+			expect(handlers.nodeExecuteAfter).toHaveLength(3);
 			expect(handlers.workflowExecuteBefore).toHaveLength(2);
-			expect(handlers.workflowExecuteAfter).toHaveLength(4);
+			expect(handlers.workflowExecuteAfter).toHaveLength(5);
 			expect(handlers.workflowExecuteResume).toHaveLength(0);
 			expect(handlers.nodeFetchedData).toHaveLength(1);
 			expect(handlers.sendResponse).toHaveLength(0);
@@ -1815,9 +1829,9 @@ describe('Execution Lifecycle Hooks', () => {
 
 			const { handlers } = lifecycleHooks;
 			expect(handlers.nodeExecuteBefore).toHaveLength(1);
-			expect(handlers.nodeExecuteAfter).toHaveLength(1);
+			expect(handlers.nodeExecuteAfter).toHaveLength(2);
 			expect(handlers.workflowExecuteBefore).toHaveLength(2);
-			expect(handlers.workflowExecuteAfter).toHaveLength(4);
+			expect(handlers.workflowExecuteAfter).toHaveLength(5);
 			expect(handlers.workflowExecuteResume).toHaveLength(0);
 			expect(handlers.nodeFetchedData).toHaveLength(1);
 			expect(handlers.sendResponse).toHaveLength(0);

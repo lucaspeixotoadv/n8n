@@ -18,6 +18,7 @@ import { InternalServerError } from '@/errors/response-errors/internal-server.er
 import { MAX_PUBSUB_PAYLOAD_BYTES } from '@/scaling/constants';
 import { Publisher } from '@/scaling/pubsub/publisher.service';
 
+import { ExecutionSubscriptionRegistry } from './execution-subscription.registry';
 import { validateSseOrigin, validateWebSocketOrigin } from './origin-validator';
 import { isPushResponse, isSSEPushRequest, isWebSocketPushRequest } from './push-helpers';
 import { PushConfig } from './push.config';
@@ -33,6 +34,7 @@ import { WebSocketPush } from './websocket.push';
 type PushEvents = {
 	editorUiConnected: string;
 	message: OnPushMessage;
+	disconnected: string;
 };
 
 /**
@@ -56,11 +58,16 @@ export class Push extends TypedEmitter<PushEvents> {
 		private readonly logger: Logger,
 		private readonly authService: AuthService,
 		private readonly publisher: Publisher,
+		private readonly executionSubscriptions: ExecutionSubscriptionRegistry,
 	) {
 		super();
 		this.logger = this.logger.scoped('push');
 
 		if (this.useWebSockets) this.backend.on('message', (msg) => this.emit('message', msg));
+		this.backend.on('disconnected', (pushRef) => {
+			this.executionSubscriptions.unsubscribeAll(pushRef);
+			this.emit('disconnected', pushRef);
+		});
 	}
 
 	getBackend() {
@@ -187,6 +194,36 @@ export class Push extends TypedEmitter<PushEvents> {
 		this.backend.sendToOne(pushMsg, pushRef, asBinary);
 	}
 
+	/**
+	 * Send an execution's event to everyone entitled to see it: the session that started
+	 * the run, if it is still around, and every session watching the execution.
+	 *
+	 * Addressing by execution rather than by session is what makes an execution observable
+	 * on its own terms — by whoever has it open, whether or not they started it, and whether
+	 * it was triggered manually, by a webhook or by a schedule. With nobody watching and no
+	 * originating session, this costs one map lookup and sends nothing.
+	 */
+	sendToExecution(
+		executionId: string,
+		pushMsg: PushMessage,
+		originPushRef?: string,
+		asBinary: boolean = false,
+	) {
+		const localRefs = new Set(this.executionSubscriptions.subscribersOf(executionId));
+		if (originPushRef && this.hasPushRef(originPushRef)) localRefs.add(originPushRef);
+
+		for (const pushRef of localRefs) {
+			this.backend.sendToOne(pushMsg, pushRef, asBinary);
+		}
+
+		// Other instances hold their own watchers, and in multi-main the originating session
+		// may live on one of them. A worker holds none, so for it this is the only delivery.
+		const { isWorker, isMultiMain } = this.instanceSettings;
+		if (isWorker || isMultiMain) {
+			this.relayViaPubSub(pushMsg, originPushRef ?? '', asBinary, executionId);
+		}
+	}
+
 	sendToUsers(pushMsg: PushMessage, userIds: Array<User['id']>) {
 		this.backend.sendToUsers(pushMsg, userIds);
 	}
@@ -223,8 +260,22 @@ export class Push extends TypedEmitter<PushEvents> {
 	handleRelayExecutionLifecycleEvent({
 		pushRef,
 		asBinary,
+		executionId,
 		...pushMsg
-	}: PushMessage & { asBinary: boolean; pushRef: string }) {
+	}: PushMessage & { asBinary: boolean; pushRef: string; executionId?: string }) {
+		// Relayed on behalf of an execution: deliver to the sessions this instance holds,
+		// which is the originating one and anyone watching. Every main does the same for its
+		// own, so between them the event reaches every entitled session exactly once.
+		if (executionId !== undefined) {
+			const localRefs = new Set(this.executionSubscriptions.subscribersOf(executionId));
+			if (pushRef && this.hasPushRef(pushRef)) localRefs.add(pushRef);
+
+			for (const ref of localRefs) {
+				this.backend.sendToOne(pushMsg, ref, asBinary);
+			}
+			return;
+		}
+
 		if (!this.hasPushRef(pushRef)) return;
 		this.send(pushMsg, pushRef, asBinary);
 	}
@@ -235,7 +286,12 @@ export class Push extends TypedEmitter<PushEvents> {
 	 *
 	 * See {@link shouldRelayViaPubSub} for more details.
 	 */
-	private relayViaPubSub(pushMsg: PushMessage, pushRef: string, asBinary: boolean = false) {
+	private relayViaPubSub(
+		pushMsg: PushMessage,
+		pushRef: string,
+		asBinary: boolean = false,
+		executionId?: string,
+	) {
 		const { type } = pushMsg;
 
 		if (type === 'nodeExecuteAfterData') {
@@ -258,7 +314,7 @@ export class Push extends TypedEmitter<PushEvents> {
 
 		void this.publisher.publishCommand({
 			command: 'relay-execution-lifecycle-event',
-			payload: { ...pushMsg, pushRef, asBinary },
+			payload: { ...pushMsg, pushRef, asBinary, executionId },
 		});
 	}
 }

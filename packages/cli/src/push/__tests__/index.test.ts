@@ -1,7 +1,9 @@
+import type { PushMessage } from '@n8n/api-types';
 import type { Logger } from '@n8n/backend-common';
 import { mockInstance } from '@n8n/backend-test-utils';
 import type { User } from '@n8n/db';
 import type { Application } from 'express';
+import type { InstanceSettings } from 'n8n-core';
 import type { Server, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { MockInstance } from 'vitest';
@@ -10,9 +12,11 @@ import { type WebSocket, Server as WSServer } from 'ws';
 
 import { BadRequestError } from '@/errors/response-errors/bad-request.error';
 import { Push } from '@/push';
+import { ExecutionSubscriptionRegistry } from '@/push/execution-subscription.registry';
 import { SSEPush } from '@/push/sse.push';
 import type { WebSocketPushRequest, SSEPushRequest, PushResponse } from '@/push/types';
 import { WebSocketPush } from '@/push/websocket.push';
+import type { Publisher } from '@/scaling/pubsub/publisher.service';
 
 import type { PushConfig } from '../push.config';
 
@@ -53,7 +57,7 @@ describe('Push', () => {
 		describe('sse backend', () => {
 			test('should not create a WebSocket server', () => {
 				config.backend = 'sse';
-				push = new Push(config, mock(), logger, mock(), mock());
+				push = new Push(config, mock(), logger, mock(), mock(), mock());
 
 				push.setupPushServer(restEndpoint, server, app);
 
@@ -70,7 +74,7 @@ describe('Push', () => {
 
 			beforeEach(() => {
 				config.backend = 'websocket';
-				push = new Push(config, mock(), logger, mock(), mock());
+				push = new Push(config, mock(), logger, mock(), mock(), mock());
 				// `new WSServer()` constructs the mock; return the stub from a function.
 				wssSpy.mockImplementation(function () {
 					return wsServer;
@@ -146,7 +150,7 @@ describe('Push', () => {
 
 			beforeEach(() => {
 				config.backend = backendName;
-				push = new Push(config, mock(), logger, mock(), mock());
+				push = new Push(config, mock(), logger, mock(), mock(), mock());
 				req.ws = backendName === 'sse' ? undefined : ws;
 			});
 
@@ -395,6 +399,139 @@ describe('Push', () => {
 					expect(emitSpy).toHaveBeenCalledWith('editorUiConnected', pushRef);
 				});
 			});
+		});
+	});
+
+	describe('sendToExecution', () => {
+		const executionId = 'execution-id';
+		const pushMsg = mock<PushMessage>({ type: 'executionStarted' });
+		const publisher = mock<Publisher>();
+
+		let subscriptions: ExecutionSubscriptionRegistry;
+		let instanceSettings: InstanceSettings;
+
+		const buildPush = () => {
+			subscriptions = new ExecutionSubscriptionRegistry();
+			push = new Push(config, instanceSettings, logger, mock(), publisher, subscriptions);
+		};
+
+		beforeEach(() => {
+			config.backend = 'websocket';
+			instanceSettings = mock<InstanceSettings>({ isWorker: false, isMultiMain: false });
+			buildPush();
+		});
+
+		test('should send to every session watching the execution', () => {
+			subscriptions.subscribe(executionId, 'watcher-1');
+			subscriptions.subscribe(executionId, 'watcher-2');
+
+			push.sendToExecution(executionId, pushMsg);
+
+			expect(wsBackend.sendToOne).toHaveBeenCalledWith(pushMsg, 'watcher-1', false);
+			expect(wsBackend.sendToOne).toHaveBeenCalledWith(pushMsg, 'watcher-2', false);
+		});
+
+		test('should send to the originating session even if it does not watch', () => {
+			wsBackend.hasPushRef.mockReturnValue(true);
+
+			push.sendToExecution(executionId, pushMsg, 'origin-ref');
+
+			expect(wsBackend.sendToOne).toHaveBeenCalledExactlyOnceWith(pushMsg, 'origin-ref', false);
+		});
+
+		test('should send only once to a session that both watches and originated', () => {
+			wsBackend.hasPushRef.mockReturnValue(true);
+			subscriptions.subscribe(executionId, 'origin-ref');
+
+			push.sendToExecution(executionId, pushMsg, 'origin-ref');
+
+			expect(wsBackend.sendToOne).toHaveBeenCalledExactlyOnceWith(pushMsg, 'origin-ref', false);
+		});
+
+		test('should skip an originating session held by another instance', () => {
+			wsBackend.hasPushRef.mockReturnValue(false);
+
+			push.sendToExecution(executionId, pushMsg, 'origin-ref');
+
+			expect(wsBackend.sendToOne).not.toHaveBeenCalled();
+			expect(publisher.publishCommand).not.toHaveBeenCalled();
+		});
+
+		test('should relay via pubsub from a worker, which holds no session', () => {
+			instanceSettings = mock<InstanceSettings>({ isWorker: true, isMultiMain: false });
+			buildPush();
+
+			push.sendToExecution(executionId, pushMsg, 'origin-ref');
+
+			expect(publisher.publishCommand).toHaveBeenCalledWith({
+				command: 'relay-execution-lifecycle-event',
+				payload: { ...pushMsg, pushRef: 'origin-ref', asBinary: false, executionId },
+			});
+		});
+	});
+
+	describe('handleRelayExecutionLifecycleEvent', () => {
+		const executionId = 'execution-id';
+		const instanceSettings = mock<InstanceSettings>({ isWorker: false, isMultiMain: true });
+
+		let subscriptions: ExecutionSubscriptionRegistry;
+
+		beforeEach(() => {
+			config.backend = 'websocket';
+			subscriptions = new ExecutionSubscriptionRegistry();
+			push = new Push(config, instanceSettings, logger, mock(), mock(), subscriptions);
+		});
+
+		test('should deliver a relayed event to the sessions this instance holds', () => {
+			subscriptions.subscribe(executionId, 'watcher-1');
+			wsBackend.hasPushRef.mockReturnValue(false);
+
+			push.handleRelayExecutionLifecycleEvent({
+				type: 'executionStarted',
+				data: mock(),
+				pushRef: 'origin-on-another-main',
+				asBinary: false,
+				executionId,
+			});
+
+			expect(wsBackend.sendToOne).toHaveBeenCalledExactlyOnceWith(
+				expect.objectContaining({ type: 'executionStarted' }),
+				'watcher-1',
+				false,
+			);
+		});
+
+		test('should drop a relayed event with no local session for the execution', () => {
+			wsBackend.hasPushRef.mockReturnValue(false);
+
+			push.handleRelayExecutionLifecycleEvent({
+				type: 'executionStarted',
+				data: mock(),
+				pushRef: 'origin-on-another-main',
+				asBinary: false,
+				executionId,
+			});
+
+			expect(wsBackend.sendToOne).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('disconnect', () => {
+		test('should drop the subscriptions of a session that goes away', () => {
+			config.backend = 'websocket';
+			const subscriptions = new ExecutionSubscriptionRegistry();
+			const unsubscribeAll = vi.spyOn(subscriptions, 'unsubscribeAll');
+
+			push = new Push(config, mock(), logger, mock(), mock(), subscriptions);
+
+			const listener = captor<(pushRef: string) => void>();
+			expect(wsBackend.on).toHaveBeenCalledWith('disconnected', listener);
+
+			const emitSpy = vi.spyOn(push, 'emit');
+			listener.value('gone-ref');
+
+			expect(unsubscribeAll).toHaveBeenCalledWith('gone-ref');
+			expect(emitSpy).toHaveBeenCalledWith('disconnected', 'gone-ref');
 		});
 	});
 });

@@ -3495,6 +3495,9 @@ describe('WorkflowExecute', () => {
 					version: 1,
 					startData: { startNodes: [{ name: 'Start', sourceData: null }] },
 					resultData: {
+						// The engine records why the run ended, so the save it triggers here carries
+						// the reason instead of leaving it to a second write.
+						error: runHook.mock.lastCall![1][0].data?.resultData?.error,
 						runData: {
 							Start: [toITaskData([{ data: { test: 'data' } }], { executionStatus: 'success' })],
 							Processing: [
@@ -3525,6 +3528,78 @@ describe('WorkflowExecute', () => {
 				JSON.stringify(updatedExecutionData.data),
 			);
 			expect(runHook.mock.lastCall![1][0].status).toEqual('canceled');
+			expect(runHook.mock.lastCall![1][0].data.resultData.error?.message).toMatch(/cancel/i);
+		});
+
+		test('a cancelled run reports everything it produced, not an empty result', async () => {
+			const trigger = createNodeData({ name: 'trigger', type: 'n8n-nodes-base.manualTrigger' });
+			const node1 = createNodeData({ name: 'node1' });
+
+			const workflow = new DirectedGraph()
+				.addNodes(trigger, node1)
+				.addConnections({ from: trigger, to: node1 })
+				.toWorkflow({ name: 'test-workflow', nodeTypes, active: false });
+
+			const waitPromise = createDeferredPromise<IRun>();
+			const additionalData = Helpers.WorkflowExecuteAdditionalData(waitPromise);
+			const workflowExecute = new WorkflowExecute(additionalData, 'manual');
+
+			// The trigger already ran; this is exactly the state a mid-run cancel finds.
+			const runExecutionData: IRunExecutionData = createRunExecutionData({
+				resultData: {
+					runData: {
+						trigger: [toITaskData([{ data: { ticket: 42 } }], { executionStatus: 'success' })],
+					},
+					lastNodeExecuted: 'trigger',
+				},
+			});
+			// @ts-expect-error private data
+			workflowExecute.runExecutionData = runExecutionData;
+
+			assert(additionalData.hooks);
+			const runHook = vi.fn();
+			additionalData.hooks.runHook = runHook;
+
+			const promise = workflowExecute.processRunExecutionData(workflow);
+			promise.cancel('reason');
+			await promise;
+
+			const afterCall = runHook.mock.calls.find(([name]) => name === 'workflowExecuteAfter');
+			const fullRunData = (afterCall as [string, [IRun]])[1][0];
+			expect(fullRunData.data.resultData.runData.trigger).toHaveLength(1);
+			expect(fullRunData.data.resultData.runData.trigger[0].data).toBeDefined();
+		});
+
+		test('a cancelled run settles only once its save has finished', async () => {
+			const trigger = createNodeData({ name: 'trigger', type: 'n8n-nodes-base.manualTrigger' });
+
+			const workflow = new DirectedGraph()
+				.addNodes(trigger)
+				.toWorkflow({ name: 'test-workflow', nodeTypes, active: false });
+
+			const waitPromise = createDeferredPromise<IRun>();
+			const additionalData = Helpers.WorkflowExecuteAdditionalData(waitPromise);
+			const workflowExecute = new WorkflowExecute(additionalData, 'manual');
+
+			// @ts-expect-error private data
+			workflowExecute.runExecutionData = createRunExecutionData({
+				resultData: { runData: {}, lastNodeExecuted: 'trigger' },
+			});
+
+			assert(additionalData.hooks);
+			let saveFinished = false;
+			additionalData.hooks.runHook = vi.fn().mockImplementation(async (name: string) => {
+				if (name !== 'workflowExecuteAfter') return;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				saveFinished = true;
+			});
+
+			const promise = workflowExecute.processRunExecutionData(workflow);
+			promise.cancel('reason');
+			await promise;
+
+			// Otherwise a shutdown drain, which waits on this promise, can outrun the write.
+			expect(saveFinished).toBe(true);
 		});
 
 		test('should set status to canceled when execution timeout is reached', async () => {

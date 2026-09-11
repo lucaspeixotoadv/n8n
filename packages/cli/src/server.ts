@@ -240,6 +240,15 @@ export class Server extends AbstractServer {
 
 			const collaborationService = Container.get(CollaborationService);
 			collaborationService.init();
+
+			// Watching an execution needs a channel the client can talk back on, so it rides
+			// with the other bidirectional features. Without it an execution still updates in
+			// the session that started it, which is the pre-existing behaviour.
+			const { ExecutionSubscriptionService } = await import(
+				'@/push/execution-subscription.service.js'
+			);
+
+			Container.get(ExecutionSubscriptionService).init();
 		} else {
 			this.logger.warn(
 				'Collaboration features are disabled because push is configured unidirectional. Use N8N_PUSH_BACKEND=websocket environment variable to enable them.',

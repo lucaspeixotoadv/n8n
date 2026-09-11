@@ -121,6 +121,8 @@ export type PubSubCommandMap = {
 	'display-workflow-publication-status': WorkflowPublicationStatusMessage;
 
 	'relay-execution-lifecycle-event': PushMessage & {
+		/** Set when the event is addressed to an execution's watchers rather than one session. */
+		executionId?: string;
 		pushRef: string;
 		asBinary: boolean;
 	};

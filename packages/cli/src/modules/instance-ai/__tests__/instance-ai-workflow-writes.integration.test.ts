@@ -29,7 +29,7 @@ import { InstanceAiAdapterService } from '../instance-ai.adapter.service';
 describe('Instance AI workflow writes (integration)', () => {
 	mockInstance(ActiveWorkflowManager);
 	mockInstance(Telemetry);
-	mockInstance(Push, new Push(mock(), mock(), mock(), mock(), mock()));
+	mockInstance(Push, new Push(mock(), mock(), mock(), mock(), mock(), mock()));
 
 	const EDITOR_CLIENT_ID = 'editor-client-id';
 

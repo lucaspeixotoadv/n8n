@@ -39,7 +39,6 @@ import {
 	UserError,
 	Workflow,
 	WorkflowOperationError,
-	createEmptyRunExecutionData,
 	createErrorExecutionData,
 } from 'n8n-workflow';
 
@@ -65,6 +64,7 @@ import { getWorkflowProjectDetailsSafe } from '@/workflows/utils';
 import { WorkflowSharingService } from '@/workflows/workflow-sharing.service';
 
 import { EngineV2ExecutionReader } from './engine-v2-execution-reader.service';
+import { ExecutionSnapshotService } from './execution-snapshot.service';
 import { MissingExecutionDataError } from './execution-data/missing-execution-data.error';
 import { isExecutionIdV2 } from './execution-id';
 import { ExecutionPersistence } from './execution-persistence';
@@ -140,6 +140,7 @@ export class ExecutionService {
 		private readonly executionStopService: ExecutionStopService,
 		private readonly ownershipService: OwnershipService,
 		private readonly engineV2ExecutionReader: EngineV2ExecutionReader,
+		private readonly executionSnapshotService: ExecutionSnapshotService,
 	) {}
 
 	/**
@@ -202,6 +203,11 @@ export class ExecutionService {
 			throw new UnexpectedError('Expected execution data for display read');
 		}
 
+		// An unfinished execution has not written its snapshot yet, so on its own it reports
+		// the state it started in. The journal of what has run since completes it, making one
+		// read answer for every status.
+		const completed = await this.executionSnapshotService.complete(execution);
+
 		let redactExecutionData: boolean | undefined;
 		const redactQuery = ExecutionRedactionQueryDtoSchema.safeParse(req.query);
 		if (redactQuery.success) {
@@ -209,7 +215,7 @@ export class ExecutionService {
 		}
 
 		const processedExecution = await this.executionRedactionServiceProxy.processExecution(
-			execution,
+			completed,
 			{
 				user: req.user,
 				redactExecutionData,
@@ -219,9 +225,9 @@ export class ExecutionService {
 		);
 
 		return {
-			...execution,
+			...completed,
 			data: stringify(processedExecution.data),
-			dataTooLargeToDisplay: execution.dataTooLargeToDisplay,
+			dataTooLargeToDisplay: completed.dataTooLargeToDisplay,
 		};
 	}
 
@@ -719,20 +725,28 @@ export class ExecutionService {
 		return await this.stopDuringRun(execution);
 	}
 
+	/**
+	 * Marks a running execution as cancelled, without touching what it produced.
+	 *
+	 * Only the engine writes run data: it is the only party that knows what actually ran,
+	 * and the copy read here is as old as the last save. Writing it back would overwrite
+	 * the engine's own account of the run with a stale one — for a run that never saved
+	 * progress, with an empty one, losing even the trigger.
+	 *
+	 * The engine records the cancellation error on its final save, so ordering between the
+	 * two writes does not matter: this one only moves status columns, and the engine's save
+	 * preserves a cancellation it finds already set.
+	 */
 	private async stopDuringRun(execution: IExecutionResponse) {
-		const error = new ManualExecutionCancelledError(execution.id);
-
-		execution.data = execution.data ?? createEmptyRunExecutionData();
-		execution.data.resultData.error = {
-			...error,
-			message: error.message,
-			stack: error.stack,
-		};
 		execution.stoppedAt = new Date();
 		execution.waitTill = null;
 		execution.status = 'canceled';
 
-		await this.executionPersistence.updateExistingExecution(execution.id, execution);
+		await this.executionPersistence.updateExistingExecution(execution.id, {
+			stoppedAt: execution.stoppedAt,
+			waitTill: execution.waitTill,
+			status: execution.status,
+		});
 
 		return execution;
 	}

@@ -30,6 +30,7 @@ import type { ExecutionPersistence } from '@/executions/execution-persistence';
 import type { EngineV2ExecutionReader } from '@/executions/engine-v2-execution-reader.service';
 import type { ExecutionRedactionServiceProxy } from '@/executions/execution-redaction-proxy.service';
 import { ExecutionService } from '@/executions/execution.service';
+import type { ExecutionSnapshotService } from '@/executions/execution-snapshot.service';
 import type { ExecutionRequest } from '@/executions/execution.types';
 import type { EventService } from '@/events/event.service';
 import type { ExecutionStopService } from '@/scaling/execution-stop.service';
@@ -80,6 +81,8 @@ describe('ExecutionService', () => {
 		executionStopService,
 		ownershipService,
 		engineV2ExecutionReader,
+		// Returns the execution unchanged; the merge itself is covered by its own tests.
+		mock<ExecutionSnapshotService>({ complete: async (execution) => execution }),
 	);
 
 	beforeEach(() => {
@@ -259,6 +262,7 @@ describe('ExecutionService', () => {
 				executionStopService,
 				ownershipService,
 				mock(),
+				mock<ExecutionSnapshotService>({ complete: async (execution) => execution }),
 			);
 
 			const mockUser = mock<User>({ id: 'user-1' });
@@ -344,6 +348,7 @@ describe('ExecutionService', () => {
 				redactionProxy,
 				mock(),
 				ownershipService,
+				mock(),
 				mock(),
 			);
 
@@ -608,10 +613,13 @@ describe('ExecutionService', () => {
 					expect.any(ManualExecutionCancelledError),
 				);
 				expect(waitTracker.stopExecution).not.toHaveBeenCalled();
-				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
-					execution.id,
-					execution,
-				);
+				// Only status columns: the engine owns the run data, and writing back the copy
+				// read here would overwrite its account of the run with a stale one.
+				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(execution.id, {
+					status: 'canceled',
+					stoppedAt: expect.any(Date),
+					waitTill: null,
+				});
 			});
 
 			it('should stop a `waiting` execution in regular mode', async () => {
@@ -645,10 +653,13 @@ describe('ExecutionService', () => {
 					expect.any(ManualExecutionCancelledError),
 				);
 				expect(waitTracker.stopExecution).toHaveBeenCalledWith(execution.id);
-				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
-					execution.id,
-					execution,
-				);
+				// Only status columns: the engine owns the run data, and writing back the copy
+				// read here would overwrite its account of the run with a stale one.
+				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(execution.id, {
+					status: 'canceled',
+					stoppedAt: expect.any(Date),
+					waitTill: null,
+				});
 			});
 
 			it('should stop a concurrency-controlled `new` execution in regular mode', async () => {
@@ -720,10 +731,11 @@ describe('ExecutionService', () => {
 						execution.id,
 						expect.any(ManualExecutionCancelledError),
 					);
-					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
-						execution.id,
-						execution,
-					);
+					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(execution.id, {
+						status: 'canceled',
+						stoppedAt: expect.any(Date),
+						waitTill: null,
+					});
 
 					expect(concurrencyControl.remove).not.toHaveBeenCalled();
 					expect(waitTracker.stopExecution).not.toHaveBeenCalled();
@@ -822,10 +834,11 @@ describe('ExecutionService', () => {
 					expect(executionStopService.requestStop).toHaveBeenCalledWith(execution.id);
 					expect(activeExecutions.stopExecution).not.toHaveBeenCalled();
 					// The canceled status is still persisted by the main process.
-					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
-						execution.id,
-						execution,
-					);
+					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(execution.id, {
+						status: 'canceled',
+						stoppedAt: expect.any(Date),
+						waitTill: null,
+					});
 				});
 			});
 		});
