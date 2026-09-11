@@ -148,6 +148,8 @@ export const OPEN_URL_PANEL_TRIGGER_NODE_TYPES = [
 	CHAT_TRIGGER_NODE_TYPE,
 	MCP_TRIGGER_NODE_TYPE,
 	MICROSOFT_AGENT365_TRIGGER_NODE_TYPE,
+	// An external system must be told this URL, so it is open by default.
+	WAIT_FOR_CALLBACK_TOOL_NODE_TYPE,
 ];
 
 export const LIST_LIKE_NODE_OPERATIONS = ['getAll', 'getMany', 'read', 'search'];

@@ -183,6 +183,19 @@ const nodeType = computed(() =>
 const { areAllCredentialsSet } = useNodeCredentialOptions(node, nodeType, '');
 
 const nodeTypeName = computed(() => node.value?.type);
+
+/**
+ * Parameter the webhook URL panel renders after, when the node asks for it.
+ *
+ * The panel sits above every parameter by default, which is right for a trigger whose URL
+ * is the point of the node. A node that only configures a callback declares the parameter
+ * its endpoint block starts after, so its own subject stays first.
+ */
+const webhookUrlAfterParameter = computed(() => {
+	const webhook = nodeType.value?.webhooks?.find((w) => w.ndvUrlAfterParameter);
+	return webhook?.ndvUrlAfterParameter;
+});
+
 const { installedPackage, isUpdateCheckAvailable } = useInstalledCommunityPackage(nodeTypeName);
 
 const isTriggerNode = computed(() => !!node.value && nodeTypesStore.isTriggerNode(node.value.type));
@@ -744,7 +757,11 @@ function handleSelectAction(params: INodeParameters) {
 				@blur="onParameterBlur"
 			/>
 			<div v-show="openPanel === 'params'">
-				<NodeWebhooks :node="node" :node-type-description="nodeType" />
+				<NodeWebhooks
+					v-if="!webhookUrlAfterParameter"
+					:node="node"
+					:node-type-description="nodeType"
+				/>
 
 				<ParameterInputList
 					v-if="nodeValuesInitialized"
@@ -755,10 +772,14 @@ function handleSelectAction(params: INodeParameters) {
 					:hidden-issues-inputs="hiddenIssuesInputs"
 					path="parameters"
 					:node="props.activeNode"
+					:slot-after-parameter="webhookUrlAfterParameter"
 					@value-changed="valueChanged"
 					@activate="onWorkflowActivate"
 					@parameter-blur="onParameterBlur"
 				>
+					<template v-if="webhookUrlAfterParameter" #afterParameter>
+						<NodeWebhooks :node="node" :node-type-description="nodeType" />
+					</template>
 					<QuickConnectBanner
 						v-if="showQuickConnectBanner"
 						:text="quickConnect?.text ?? ''"

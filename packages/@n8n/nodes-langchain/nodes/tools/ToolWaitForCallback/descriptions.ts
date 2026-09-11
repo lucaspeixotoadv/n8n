@@ -107,7 +107,7 @@ export const callbackIdentifierProperties: INodeProperties[] = [
 
 export const callbackUrlNotice: INodeProperties = {
 	displayName:
-		"The callback URL is this node's production webhook URL, shown above. It exists as soon as the workflow is published, so an external system can be told about it before any wait is registered. A callback that arrives before the tool call is parked until the wait registers.",
+		'The callback URL is fixed and exists as soon as the workflow is published, so an external system can be told about it before any wait is registered. A callback that arrives before the tool call registers its wait is parked until it does.',
 	name: 'callbackUrlNotice',
 	type: 'notice',
 	default: '',

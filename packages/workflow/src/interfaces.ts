@@ -3159,6 +3159,14 @@ export interface IWebhookDescription {
 	nodeType?: 'webhook' | 'form' | 'mcp' | 'toolCallback';
 	ndvHideUrl?: string | boolean; // If true the webhook will not be displayed in the editor
 	ndvHideMethod?: string | boolean; // If true the method will not be displayed in the editor
+	/**
+	 * Parameter the NDV shows the URL panel after, inside the parameter list.
+	 *
+	 * Without it the panel sits above every parameter, which is right for a trigger whose
+	 * URL is the point of the node. A node that only configures a callback keeps its own
+	 * subject first and names the parameter the endpoint block starts after.
+	 */
+	ndvUrlAfterParameter?: string;
 }
 
 export interface ProxyInput {

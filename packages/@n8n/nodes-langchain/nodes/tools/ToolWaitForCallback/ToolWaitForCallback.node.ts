@@ -46,6 +46,9 @@ const callbackWebhookDescription: IWebhookDescription = {
 	name: 'default',
 	nodeType: 'toolCallback',
 	isFullPath: true,
+	// The URL belongs to the callback block, not above the node's own subject: the NDV
+	// shows it after the wait identifier, where the endpoint settings start.
+	ndvUrlAfterParameter: 'waitIdentifier',
 	...webhookDescriptionFields({
 		httpMethod: fromParameter('httpMethod', 'POST'),
 	}),
@@ -69,7 +72,7 @@ export class ToolWaitForCallback implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Wait for Callback',
 		name: 'toolWaitForCallback',
-		icon: 'fa:hourglass-half',
+		icon: 'node:wait',
 		iconColor: 'crimson',
 		group: ['transform'],
 		version: 1,
@@ -79,22 +82,24 @@ export class ToolWaitForCallback implements INodeType {
 		defaults: { name: 'Wait for Callback' },
 		codex: {
 			categories: ['AI'],
-			subcategories: { AI: ['Tools'], Tools: ['Other Tools'] },
+			subcategories: { AI: ['Tools'], Tools: ['Recommended Tools'] },
 		},
 		inputs: [],
 		outputs: [NodeConnectionTypes.AiTool],
 		outputNames: ['Tool'],
 		credentials: credentialsProperty(AUTH_PROPERTY_NAME),
 		webhooks: [callbackWebhookDescription],
+		// What the tool is comes first, then the endpoint that resolves it: the URL panel
+		// renders after `waitIdentifier`, so everything below it configures the callback.
 		properties: [
 			getConnectionHintNoticeField([NodeConnectionTypes.AiAgent]),
 			toolDescriptionProperty,
 			waitIdentifierProperty,
-			callbackUrlNotice,
 			callbackMethodProperty,
 			callbackAuthenticationProperty,
 			callbackIdentifierSourceProperty,
 			...callbackIdentifierProperties,
+			callbackUrlNotice,
 		],
 	};
 
