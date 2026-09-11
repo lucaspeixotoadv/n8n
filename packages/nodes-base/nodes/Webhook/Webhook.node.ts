@@ -31,10 +31,11 @@ import {
 } from './description';
 import { WebhookAuthorizationError } from './error';
 import {
+	checkRequestGates,
 	checkResponseModeConfiguration,
 	configuredOutputs,
 	handleFormData,
-	checkRequestGates,
+	requestMatchesOnlyRunIf,
 	setupOutputConnection,
 	validateWebhookAuthentication,
 } from './utils';
@@ -272,20 +273,7 @@ export class Webhook extends Node {
 			throw error;
 		}
 
-		const node = context.getNode();
-		const rawOptions = node.parameters?.options as { onlyRunIf?: unknown } | undefined;
-		const rawOnlyRunIf = rawOptions?.onlyRunIf;
-		if (typeof rawOnlyRunIf === 'string' && rawOnlyRunIf.startsWith('=')) {
-			try {
-				const result = context.evaluateExpression(rawOnlyRunIf.slice(1), 0);
-				if (!result) return {};
-			} catch (error) {
-				context.logger.warn(
-					`Webhook "Only Run If" expression failed to evaluate; allowing request through. ${(error as Error).message}`,
-					{ nodeName: node.name },
-				);
-			}
-		}
+		if (!requestMatchesOnlyRunIf(context)) return {};
 
 		const prepareOutput = setupOutputConnection(context, requestMethod, {
 			jwtPayload: validationData,

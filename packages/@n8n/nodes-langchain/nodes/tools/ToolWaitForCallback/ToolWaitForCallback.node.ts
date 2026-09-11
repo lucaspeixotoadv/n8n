@@ -5,6 +5,7 @@ import {
 	checkRequestGates,
 	getResponseCode,
 	getResponseData,
+	requestMatchesOnlyRunIf,
 	validateWebhookAuthentication,
 	type RequestGateOptions,
 } from 'n8n-nodes-base/dist/nodes/Webhook/utils';
@@ -27,7 +28,12 @@ import {
 	webhookDescriptionFields,
 } from 'n8n-workflow';
 
-import { toCallbackPayload, toToolResult, toWaitingRecord } from './callback-payload';
+import {
+	toCallbackPayload,
+	toMultipartCallbackPayload,
+	toToolResult,
+	toWaitingRecord,
+} from './callback-payload';
 import {
 	AUTH_PROPERTY_NAME,
 	callbackAuthenticationProperty,
@@ -138,6 +144,7 @@ export class ToolWaitForCallback implements INodeType {
 	 */
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
 		const options = this.getNodeParameter('options', {}) as RequestGateOptions;
+		const request = this.getRequestObject();
 
 		// One refusal for every gate and for wrong credentials alike, so a caller learns
 		// that it was refused and never which check refused it.
@@ -149,7 +156,7 @@ export class ToolWaitForCallback implements INodeType {
 		};
 
 		// The shared order every endpoint keeps: address, then user agent, then credentials.
-		if (checkRequestGates(this.getRequestObject(), options) !== null) {
+		if (checkRequestGates(request, options) !== null) {
 			return refuse(new WebhookAuthorizationError(403));
 		}
 
@@ -160,7 +167,18 @@ export class ToolWaitForCallback implements INodeType {
 			throw error;
 		}
 
-		return { workflowData: toToolResult(toCallbackPayload(this.getBodyData())) };
+		// After authentication, so an unauthenticated caller cannot probe the filter. Returning
+		// no `workflowData` is what tells the handler that this callback resolves nothing; the
+		// caller still gets the response every authenticated request gets.
+		if (!requestMatchesOnlyRunIf(this)) return {};
+
+		const body = this.getBodyData();
+		const payload =
+			request.contentType === 'multipart/form-data'
+				? await toMultipartCallbackPayload(body)
+				: toCallbackPayload(body);
+
+		return { workflowData: toToolResult(payload) };
 	}
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {

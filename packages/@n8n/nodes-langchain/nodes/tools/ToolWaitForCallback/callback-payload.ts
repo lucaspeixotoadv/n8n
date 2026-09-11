@@ -1,3 +1,5 @@
+import { rm } from 'node:fs/promises';
+
 import type { IDataObject, INodeExecutionData } from 'n8n-workflow';
 
 /**
@@ -13,6 +15,50 @@ export function toCallbackPayload(body: unknown): IDataObject {
 	}
 
 	return { body: body ?? null };
+}
+
+/** An uploaded part, as the multipart parser writes it to a temporary path. */
+type UploadedFile = { filepath?: unknown };
+
+/** Every temporary path the multipart parser wrote for this request. */
+function uploadedPaths(files: unknown): string[] {
+	if (files === null || typeof files !== 'object') return [];
+
+	const paths: string[] = [];
+	for (const entry of Object.values(files as Record<string, unknown>)) {
+		for (const file of Array.isArray(entry) ? entry : [entry]) {
+			const { filepath } = (file ?? {}) as UploadedFile;
+			if (typeof filepath === 'string') paths.push(filepath);
+		}
+	}
+
+	return paths;
+}
+
+/**
+ * The fields of a multipart callback, with the files it carried removed from disk.
+ *
+ * A multipart body is parsed into `{ data, files }`, where every file is already written to
+ * a temporary path. The fields become the tool result and the files are dropped: the
+ * `ai_tool` channel carries JSON to a model and has no representation for a file, so keeping
+ * the fields is what makes such a callback useful instead of a failure.
+ *
+ * Removing the temporary files is part of reading them. Nothing else on this path removes
+ * them, and a callback endpoint can be called as often as an external system likes.
+ */
+export async function toMultipartCallbackPayload(body: unknown): Promise<IDataObject> {
+	if (body === null || typeof body !== 'object') return toCallbackPayload(body);
+
+	const { data, files } = body as { data?: unknown; files?: unknown };
+
+	await Promise.all(
+		uploadedPaths(files).map(async (filepath) => {
+			// A file that is already gone is not a problem worth failing the callback for.
+			await rm(filepath, { force: true }).catch(() => {});
+		}),
+	);
+
+	return toCallbackPayload(data ?? {});
 }
 
 /** The tool result as node output: one item on the tool channel, carrying only the body. */

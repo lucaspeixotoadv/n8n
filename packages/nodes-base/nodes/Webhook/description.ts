@@ -306,6 +306,18 @@ export const ignoreBotsOption: INodeProperties = {
 };
 
 /** @see ignoreBotsOption */
+export const onlyRunIfOption: INodeProperties = {
+	displayName: 'Only Run If',
+	name: 'onlyRunIf',
+	type: 'string',
+	default: '',
+	placeholder: "{{ $json.body.campaign_id === 'user-research-invite' }}",
+	// eslint-disable-next-line n8n-nodes-base/node-param-description-miscased-json
+	description:
+		'Expression evaluated against the incoming request. The workflow will run only if the expression returns true. <code>$json</code> exposes the request as <code>{ body, headers, params, query }</code>. Requests that do not match receive a 200 response, without creating an execution. If the expression fails to evaluate, the request is allowed through and the error is logged.',
+};
+
+/** @see ignoreBotsOption */
 export const ipWhitelistOption: INodeProperties = {
 	displayName: 'IP(s) Allowlist',
 	name: 'ipWhitelist',
@@ -442,16 +454,7 @@ export const optionsProperty: INodeProperties = {
 				'The name of the output field to put any binary file data in. Only relevant if binary data is received.',
 		},
 		ignoreBotsOption,
-		{
-			displayName: 'Only Run If',
-			name: 'onlyRunIf',
-			type: 'string',
-			default: '',
-			placeholder: "{{ $json.body.campaign_id === 'user-research-invite' }}",
-			// eslint-disable-next-line n8n-nodes-base/node-param-description-miscased-json
-			description:
-				'Expression evaluated against the incoming request. The workflow will run only if the expression returns true. <code>$json</code> exposes the request as <code>{ body, headers, params, query }</code>. Requests that do not match receive a 200 response, without creating an execution. If the expression fails to evaluate, the request is allowed through and the error is logged.',
-		},
+		onlyRunIfOption,
 		ipWhitelistOption,
 		noResponseBodyOption,
 		{

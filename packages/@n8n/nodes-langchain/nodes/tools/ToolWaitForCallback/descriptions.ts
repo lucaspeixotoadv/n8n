@@ -5,6 +5,7 @@ import {
 	ignoreBotsOption,
 	ipWhitelistOption,
 	noResponseBodyOption,
+	onlyRunIfOption,
 	onReceivedResponseDataOption,
 	responseCodeProperty,
 	responseHeadersOption,
@@ -167,8 +168,11 @@ export const callbackResponseCodeProperty: INodeProperties = responseCodePropert
  * The endpoint's options, every one of them the Webhook node's own property.
  *
  * `Ignore Bots` and `IP(s) Allowlist` gate the request before authentication, through the
- * shared `checkRequestGates`. Response body and headers are read by `getResponseData` and
- * `WebhookResponseHeaders`, so there is no second reading of those fields.
+ * shared `checkRequestGates`. `Only Run If` runs after it, through the shared
+ * `requestMatchesOnlyRunIf`: a callback it rejects resolves no tool call, which matters more
+ * here than on a webhook, where the same filter only saves an execution. Response body and
+ * headers are read by `getResponseData` and `WebhookResponseHeaders`, so there is no second
+ * reading of those fields.
  *
  * The binary options stay out: they put bytes in `binary`, and the `ai_tool` channel carries
  * JSON to a model, which has no representation for them.
@@ -182,6 +186,7 @@ export const callbackOptionsProperty: INodeProperties = {
 	options: [
 		ignoreBotsOption,
 		ipWhitelistOption,
+		onlyRunIfOption,
 		noResponseBodyOption,
 		onReceivedResponseDataOption,
 		responseHeadersOption,

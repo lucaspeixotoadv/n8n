@@ -242,22 +242,32 @@ describe('ToolWaitForCallback', () => {
 			body = {},
 			userAgent = 'curl/8.4.0',
 			ip = '203.0.113.10',
+			contentType = 'application/json',
+			evaluateExpression = vi.fn(),
 		}: {
 			options?: IDataObject;
 			body?: unknown;
 			userAgent?: string;
 			ip?: string;
+			contentType?: string;
+			evaluateExpression?: ReturnType<typeof vi.fn>;
 		} = {}) => {
 			const response = mock<Response>({ writeHead: vi.fn(), end: vi.fn() });
 
+			// `Only Run If` is read off the raw parameters, so the node itself must carry them.
+			const node = { ...NODE, parameters: { options } } as INode;
+
 			const ctx = mock<IWebhookFunctions>({
-				getNode: () => NODE,
+				getNode: () => node,
 				getNodeParameter: ((name: string) => (name === 'options' ? options : 'none')) as never,
 				getBodyData: () => body as never,
 				getHeaderData: () => ({ authorization: 'secret' }),
 				getQueryData: () => ({ trace: 'abc' }),
-				getRequestObject: () => ({ ip, ips: [], headers: { 'user-agent': userAgent } }) as never,
+				getRequestObject: () =>
+					({ ip, ips: [], contentType, headers: { 'user-agent': userAgent } }) as never,
 				getResponseObject: () => response as never,
+				evaluateExpression: evaluateExpression as never,
+				logger: mock(),
 			});
 
 			return { ctx, response };
@@ -325,6 +335,102 @@ describe('ToolWaitForCallback', () => {
 			const result = await node.webhook.call(ctx);
 
 			expect(result.workflowData).toEqual([[{ json: { id: 125 } }]]);
+		});
+
+		describe('Only Run If', () => {
+			it('resolves nothing when the expression rejects the callback', async () => {
+				const { ctx } = makeWebhookContext({
+					options: { onlyRunIf: '={{ $json.body.status === "done" }}' },
+					body: { status: 'processing' },
+					evaluateExpression: vi.fn().mockReturnValue(false),
+				});
+
+				const result = await node.webhook.call(ctx);
+
+				// No `workflowData` is what tells the handler this callback resolves nothing.
+				expect(result.workflowData).toBeUndefined();
+			});
+
+			it('serves the callback when the expression accepts it', async () => {
+				const { ctx } = makeWebhookContext({
+					options: { onlyRunIf: '={{ $json.body.status === "done" }}' },
+					body: { status: 'done' },
+					evaluateExpression: vi.fn().mockReturnValue(true),
+				});
+
+				const result = await node.webhook.call(ctx);
+
+				expect(result.workflowData).toEqual([[{ json: { status: 'done' } }]]);
+			});
+
+			it('lets the callback through when the expression fails to evaluate', async () => {
+				const { ctx } = makeWebhookContext({
+					options: { onlyRunIf: '={{ $json.body.missing.deep }}' },
+					body: { status: 'done' },
+					evaluateExpression: vi.fn().mockImplementation(() => {
+						throw new Error('cannot read property of undefined');
+					}),
+				});
+
+				const result = await node.webhook.call(ctx);
+
+				expect(result.workflowData).toEqual([[{ json: { status: 'done' } }]]);
+			});
+
+			it('ignores a plain string, which is not an expression', async () => {
+				const evaluateExpression = vi.fn();
+				const { ctx } = makeWebhookContext({
+					options: { onlyRunIf: 'status === "done"' },
+					body: { status: 'processing' },
+					evaluateExpression,
+				});
+
+				const result = await node.webhook.call(ctx);
+
+				expect(evaluateExpression).not.toHaveBeenCalled();
+				expect(result.workflowData).toEqual([[{ json: { status: 'processing' } }]]);
+			});
+
+			// The filter must not be reachable by a caller the gates already refused.
+			it('is not evaluated for a request the address gate refused', async () => {
+				const evaluateExpression = vi.fn();
+				const { ctx } = makeWebhookContext({
+					options: { ipWhitelist: '198.51.100.0/24', onlyRunIf: '={{ true }}' },
+					ip: '203.0.113.10',
+					evaluateExpression,
+				});
+
+				await node.webhook.call(ctx);
+
+				expect(evaluateExpression).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('multipart callback', () => {
+			it('keeps the fields and drops the files', async () => {
+				const { ctx } = makeWebhookContext({
+					contentType: 'multipart/form-data',
+					body: {
+						data: { id: '125', status: 'DONE' },
+						files: { receipt: { filepath: '/tmp/does-not-exist-125' } },
+					},
+				});
+
+				const result = await node.webhook.call(ctx);
+
+				expect(result.workflowData).toEqual([[{ json: { id: '125', status: 'DONE' } }]]);
+			});
+
+			it('yields an object when a multipart callback carries no fields', async () => {
+				const { ctx } = makeWebhookContext({
+					contentType: 'multipart/form-data',
+					body: { data: {}, files: {} },
+				});
+
+				const result = await node.webhook.call(ctx);
+
+				expect(result.workflowData).toEqual([[{ json: {} }]]);
+			});
 		});
 
 		// A caller must learn that it was refused, never which check refused it.

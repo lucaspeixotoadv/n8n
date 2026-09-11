@@ -165,6 +165,35 @@ export const isIpAllowed = (
 	return false;
 };
 
+/**
+ * Whether the endpoint's `Only Run If` expression accepts this request.
+ *
+ * The expression is read from the node's raw parameters instead of through
+ * `getNodeParameter`, so a plain string is left alone and only an `=` expression is
+ * evaluated. `$json` is the whole request here, which is what lets the filter read a body
+ * field the way the field description shows.
+ *
+ * An expression that fails to evaluate lets the request through and is logged. A broken
+ * filter must never turn into a silent block on every caller.
+ */
+export function requestMatchesOnlyRunIf(context: IWebhookFunctions): boolean {
+	const node = context.getNode();
+	const options = node.parameters?.options as { onlyRunIf?: unknown } | undefined;
+	const onlyRunIf = options?.onlyRunIf;
+
+	if (typeof onlyRunIf !== 'string' || !onlyRunIf.startsWith('=')) return true;
+
+	try {
+		return Boolean(context.evaluateExpression(onlyRunIf.slice(1), 0));
+	} catch (error) {
+		context.logger.warn(
+			`"Only Run If" expression failed to evaluate; allowing request through. ${(error as Error).message}`,
+			{ nodeName: node.name },
+		);
+		return true;
+	}
+}
+
 /** Options that gate a request before any authentication runs. */
 export type RequestGateOptions = {
 	ipWhitelist?: string | string[];

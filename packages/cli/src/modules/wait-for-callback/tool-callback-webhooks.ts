@@ -10,6 +10,7 @@ import type {
 } from '@/webhooks/tool-callback-webhook-registry';
 import { WebhookExecutionContext } from '@/webhooks/webhook-execution-context';
 import { extractWebhookOnReceivedResponse } from '@/webhooks/webhook-on-received-response-extractor';
+import { parseWebhookRequestBody } from '@/webhooks/webhook-request-body';
 import { sanitizeWebhookRequest } from '@/webhooks/webhook-request-sanitizer';
 import type { WebhookResponse } from '@/webhooks/webhook-response';
 import { createNoResponse, createStaticResponse } from '@/webhooks/webhook-response';
@@ -32,9 +33,9 @@ const DEFAULT_BODY = { message: 'Callback received' };
  * resume to the runner.
  *
  * Every authenticated request gets the same response — the one the node configured —
- * whether it woke an execution, was a duplicate, or matched nothing at all. Answering
- * differently would turn the endpoint into an oracle for which identifiers are currently
- * being waited on.
+ * whether it woke an execution, was a duplicate, was filtered out by the node, or matched
+ * nothing at all. Answering differently would turn the endpoint into an oracle for which
+ * identifiers are currently being waited on.
  */
 @Service()
 export class ToolCallbackWebhooks implements ToolCallbackHandler {
@@ -55,6 +56,12 @@ export class ToolCallbackWebhooks implements ToolCallbackHandler {
 		if (!namespace) return this.acknowledge(request);
 
 		sanitizeWebhookRequest(req);
+
+		// The webhook routes are registered before the global body parser, so an endpoint that
+		// does not parse the request sees no body at all. A callback never reaches the parsing
+		// that `WebhookHelpers.executeWebhook` does, because it is dispatched before it.
+		await parseWebhookRequestBody(req, node.typeVersion);
+
 		additionalData.httpRequest = req;
 		additionalData.httpResponse = res;
 
@@ -70,10 +77,15 @@ export class ToolCallbackWebhooks implements ToolCallbackHandler {
 		);
 		if (webhookResult.noWebhookResponse === true) return createNoResponse();
 
+		// No `workflowData` means the node declined this callback — its `Only Run If` did not
+		// match — so there is nothing to correlate and nothing to resume. Without this the
+		// absent data would read as an empty body and wake the tool call with it.
+		if (webhookResult.workflowData === undefined) return this.acknowledge(request);
+
 		const correlationValue = this.identifierResolver.resolve(request);
 		if (correlationValue === null) return this.acknowledge(request);
 
-		const payload = (webhookResult.workflowData?.[0]?.[0]?.json ?? {}) as IDataObject;
+		const payload = (webhookResult.workflowData[0]?.[0]?.json ?? {}) as IDataObject;
 		const outcome = await this.callbackWaitService.correlate(namespace, correlationValue, payload);
 
 		if (outcome.kind !== 'claimed') return this.acknowledge(request);

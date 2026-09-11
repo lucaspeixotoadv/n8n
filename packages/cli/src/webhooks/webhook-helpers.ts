@@ -65,7 +65,6 @@ import { ResponseError } from '@/errors/response-errors/abstract/response.error'
 import { InternalServerError } from '@/errors/response-errors/internal-server.error';
 import { NotFoundError } from '@/errors/response-errors/not-found.error';
 import { EventService } from '@/events/event.service';
-import { parseBody } from '@/middlewares';
 import { WebhookResponseRelay } from '@/scaling/webhook-response-relay';
 import {
 	type AuthFailureReason,
@@ -78,7 +77,7 @@ import { WorkflowStatisticsService } from '@/services/workflow-statistics.servic
 import { WaitTracker } from '@/wait-tracker';
 import { EXECUTION_ENDED_WITHOUT_RESPONSE } from '@/webhooks/constants';
 import { WebhookExecutionContext } from '@/webhooks/webhook-execution-context';
-import { createMultiFormDataParser } from '@/webhooks/webhook-form-data';
+import { parseWebhookRequestBody } from '@/webhooks/webhook-request-body';
 import { extractWebhookLastNodeResponse } from '@/webhooks/webhook-last-node-response-extractor';
 import { extractWebhookOnReceivedResponse } from '@/webhooks/webhook-on-received-response-extractor';
 import type { WebhookResponse } from '@/webhooks/webhook-response';
@@ -308,9 +307,6 @@ export const handleFormRedirectionCase = (
 
 	return data;
 };
-
-const { formDataFileSizeMax } = Container.get(GlobalConfig).endpoints;
-const parseFormData = createMultiFormDataParser(formDataFileSizeMax);
 
 export function setupResponseNodePromise(
 	responsePromise: IDeferredPromise<IN8nHttpFullResponse>,
@@ -1299,24 +1295,7 @@ async function parseRequestBody(
 		return;
 	}
 
-	const { contentType } = req;
-	if (contentType === 'multipart/form-data') {
-		req.body = await parseFormData(req);
-	} else {
-		if (nodeVersion > 1) {
-			if (
-				contentType?.startsWith('application/json') ||
-				contentType?.startsWith('text/plain') ||
-				contentType?.startsWith('application/x-www-form-urlencoded') ||
-				contentType?.endsWith('/xml') ||
-				contentType?.endsWith('+xml')
-			) {
-				await parseBody(req);
-			}
-		} else {
-			await parseBody(req);
-		}
-	}
+	await parseWebhookRequestBody(req, nodeVersion);
 }
 
 /**
