@@ -3,6 +3,8 @@ import { ExecutionNodeRunRepository } from '@n8n/db';
 import { Service } from '@n8n/di';
 import { isTerminalExecutionStatus, type IRunData } from 'n8n-workflow';
 
+import { ExecutionJournalConfig } from '@/execution-lifecycle/execution-journal.config';
+
 /**
  * Completes an execution's persisted state with the runs recorded since its last snapshot.
  *
@@ -12,13 +14,18 @@ import { isTerminalExecutionStatus, type IRunData } from 'n8n-workflow';
  * question for every status: what has this execution done so far.
  *
  * Terminal executions are returned untouched. Their snapshot is already complete, and their
- * journal has been released, so there is nothing to merge and no query worth making.
+ * journal has been released, so there is nothing to merge and no query worth making. The
+ * same holds for every execution when journalling is off: nothing was ever recorded.
  */
 @Service()
 export class ExecutionSnapshotService {
-	constructor(private readonly nodeRunRepository: ExecutionNodeRunRepository) {}
+	constructor(
+		private readonly nodeRunRepository: ExecutionNodeRunRepository,
+		private readonly config: ExecutionJournalConfig,
+	) {}
 
 	async complete(execution: IExecutionResponse): Promise<IExecutionResponse> {
+		if (!this.config.enabled) return execution;
 		if (isTerminalExecutionStatus(execution.status)) return execution;
 
 		const journal = await this.nodeRunRepository.findByExecution(execution.id);

@@ -29,6 +29,7 @@ import { LifecycleMetadata } from '@n8n/decorators';
 import { Container } from '@n8n/di';
 
 import { EventService } from '@/events/event.service';
+import { ExecutionJournalService } from '@/execution-lifecycle/execution-journal.service';
 import { ExecutionPersistence } from '@/executions/execution-persistence';
 import { ExecutionRedactionServiceProxy } from '@/executions/execution-redaction-proxy.service';
 import { ExternalHooks } from '@/external-hooks';
@@ -56,6 +57,9 @@ describe('Execution Lifecycle Hooks', () => {
 	const executionRepository = mockInstance(ExecutionRepository);
 	const executionPersistence = mockInstance(ExecutionPersistence);
 	const executionMetadataService = mockInstance(ExecutionMetadataService);
+	// Journalling is opt-in, so state it here rather than letting the handler counts
+	// below depend on whatever the default happens to be.
+	mockInstance(ExecutionJournalService, { enabled: true });
 	const externalHooks = mockInstance(ExternalHooks);
 	const push = mockInstance(Push);
 	const workflowStaticDataService = mockInstance(WorkflowStaticDataService);

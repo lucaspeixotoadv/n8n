@@ -521,8 +521,8 @@ function hookFunctionsSaveProgress(
  * This is what makes an unfinished execution readable: its `data` is only written when the
  * run ends, so without a journal a run that is still going — or one that died before that
  * final write — says nothing about how far it got. Unlike `hookFunctionsSaveProgress`,
- * which rewrites the entire execution after every node, this appends one row per run, so
- * it can stay on by default.
+ * which rewrites the entire execution after every node, this appends one row per run — but
+ * it is still a write per node, so it is opt-in, like progress saving itself.
  */
 function hookFunctionsJournal(hooks: ExecutionLifecycleHooks) {
 	const journal = Container.get(ExecutionJournalService);

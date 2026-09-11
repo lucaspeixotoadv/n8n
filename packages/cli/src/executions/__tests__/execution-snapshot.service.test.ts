@@ -2,6 +2,7 @@ import type { ExecutionNodeRun, ExecutionNodeRunRepository, IExecutionResponse }
 import type { ExecutionStatus, IRunData, ITaskData } from 'n8n-workflow';
 import { mock } from 'vitest-mock-extended';
 
+import type { ExecutionJournalConfig } from '@/execution-lifecycle/execution-journal.config';
 import { ExecutionSnapshotService } from '@/executions/execution-snapshot.service';
 
 const task = (marker: string): ITaskData =>
@@ -35,7 +36,21 @@ describe('ExecutionSnapshotService', () => {
 	beforeEach(() => {
 		repository = mock<ExecutionNodeRunRepository>();
 		repository.findByExecution.mockResolvedValue([]);
-		service = new ExecutionSnapshotService(repository);
+		service = new ExecutionSnapshotService(
+			repository,
+			mock<ExecutionJournalConfig>({ enabled: true }),
+		);
+	});
+
+	it('leaves an execution untouched when journalling is off', async () => {
+		const disabled = new ExecutionSnapshotService(
+			repository,
+			mock<ExecutionJournalConfig>({ enabled: false }),
+		);
+		const running = execution('running', {});
+
+		expect(await disabled.complete(running)).toBe(running);
+		expect(repository.findByExecution).not.toHaveBeenCalled();
 	});
 
 	it.each(['success', 'error', 'canceled', 'crashed'] as ExecutionStatus[])(
