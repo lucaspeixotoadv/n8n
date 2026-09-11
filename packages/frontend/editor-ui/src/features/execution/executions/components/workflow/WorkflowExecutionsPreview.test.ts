@@ -160,6 +160,28 @@ describe('WorkflowExecutionsPreview.vue', () => {
 		expect(getByTestId('stop-execution')).toBeDisabled();
 	});
 
+	it.each(['new', 'running', 'waiting'] as const)(
+		'renders the execution canvas for a %s execution',
+		(status) => {
+			const { getByTestId } = renderComponent({
+				props: { execution: { ...executionData, status } },
+			});
+
+			expect(getByTestId('execution-preview-host')).toBeInTheDocument();
+		},
+	);
+
+	it.each(['success', 'error', 'canceled', 'crashed'] as const)(
+		'offers no stop button for a %s execution',
+		(status) => {
+			const { queryByTestId } = renderComponent({
+				props: { execution: { ...executionData, status } },
+			});
+
+			expect(queryByTestId('stop-execution')).not.toBeInTheDocument();
+		},
+	);
+
 	it('shows the add-to-dataset button for a successful non-evaluation execution', () => {
 		const { getByTestId } = renderComponent({
 			props: { execution: { ...executionData, status: 'success', mode: 'manual' } },
