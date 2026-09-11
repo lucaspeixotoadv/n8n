@@ -3,9 +3,16 @@ import type {
 	FromAIArgument,
 	IExecuteFunctions,
 	INode,
+	IWebhookDescription,
 	IWebhookFunctions,
 } from 'n8n-workflow';
-import { NodeOperationError, traverseNodeParameters, WAIT_INDEFINITELY } from 'n8n-workflow';
+import {
+	getNodeWebhookPath,
+	NodeOperationError,
+	resolveWebhookDescriptionField,
+	traverseNodeParameters,
+	WAIT_INDEFINITELY,
+} from 'n8n-workflow';
 import { mock } from 'vitest-mock-extended';
 
 import { ToolWaitForCallback } from '../ToolWaitForCallback.node';
@@ -185,6 +192,30 @@ describe('ToolWaitForCallback', () => {
 			const ctx = mock<IExecuteFunctions>({ getNode: () => NODE, helpers: {} as never });
 
 			await expect(node.execute.call(ctx)).rejects.toThrow(NodeOperationError);
+		});
+	});
+
+	describe('callback endpoint', () => {
+		const callbackWebhook = node.description.webhooks?.[0] as IWebhookDescription;
+
+		/** The endpoint the backend registers for a node whose `path` parameter holds this. */
+		function endpointOf(path: string) {
+			const resolution = resolveWebhookDescriptionField(
+				{ parameters: { path } },
+				callbackWebhook,
+				'path',
+			);
+			if (!resolution.resolved) throw new Error('The path is not read from the node parameters');
+
+			return getNodeWebhookPath('wf-1', NODE, String(resolution.value ?? ''), true);
+		}
+
+		it('reads the path from the node parameters, like the Webhook node', () => {
+			expect(endpointOf('order-status')).toBe('order-status');
+		});
+
+		it('keeps the generated endpoint when no path is given', () => {
+			expect(endpointOf('')).toBe('endpoint-a');
 		});
 	});
 

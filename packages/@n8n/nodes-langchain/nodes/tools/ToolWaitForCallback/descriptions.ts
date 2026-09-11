@@ -50,6 +50,28 @@ export const callbackMethodProperty: INodeProperties = {
 	default: 'POST',
 };
 
+/**
+ * The path segment of the callback endpoint, read by the webhook description through
+ * `fromParameter('path')` — the same declaration the Webhook node uses.
+ *
+ * Empty keeps the generated endpoint: `getNodeWebhookPath` returns `path || node.webhookId`
+ * for a full-path webhook, so the node's own id is the endpoint until a path is given. That
+ * is what every existing node keeps on upgrade.
+ *
+ * An expression is resolved when the workflow registers its webhooks, against the same
+ * limited context as every other webhook path: `$parameter`, `$workflow`, `$vars` and the
+ * rest resolve, and anything that needs run data does not exist yet.
+ */
+export const callbackPathProperty: INodeProperties = {
+	displayName: 'Path',
+	name: 'path',
+	type: 'string',
+	default: '',
+	placeholder: 'e.g. order-status',
+	description:
+		"Path the callback endpoint listens on. Leave it empty to keep the endpoint generated for this node. Dynamic segments are written with ':', as in 'orders/:id'. An expression here is resolved when the workflow is published, so it cannot read data from a run.",
+};
+
 /** Authentication for the callback endpoint, reusing the Webhook node's shared property. */
 export const callbackAuthenticationProperty: INodeProperties =
 	authenticationProperty(AUTH_PROPERTY_NAME);
@@ -107,7 +129,7 @@ export const callbackIdentifierProperties: INodeProperties[] = [
 
 export const callbackUrlNotice: INodeProperties = {
 	displayName:
-		'The callback URL is fixed and exists as soon as the workflow is published, so an external system can be told about it before any wait is registered. A callback that arrives before the tool call registers its wait is parked until it does.',
+		'The callback URL exists as soon as the workflow is published, so an external system can be told about it before any wait is registered. It is the same URL for every run: a callback is matched to a waiting tool call by its Callback Identifier, not by its URL. A callback that arrives before the tool call registers its wait is parked until it does.',
 	name: 'callbackUrlNotice',
 	type: 'notice',
 	default: '',

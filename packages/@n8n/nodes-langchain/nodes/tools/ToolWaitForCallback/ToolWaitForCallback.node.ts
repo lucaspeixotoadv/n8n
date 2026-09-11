@@ -27,6 +27,7 @@ import {
 	callbackIdentifierProperties,
 	callbackIdentifierSourceProperty,
 	callbackMethodProperty,
+	callbackPathProperty,
 	callbackUrlNotice,
 	toolDescriptionProperty,
 	waitIdentifierProperty,
@@ -35,12 +36,17 @@ import {
 /**
  * The endpoint that receives callbacks for this tool.
  *
- * `isFullPath` with an empty path registers the node's own `webhookId`, so the URL is fixed
- * and exists as soon as the workflow is published — before any execution does. That is what
- * lets an external system be told about it up front, and what makes a callback that beats
- * its tool call addressable at all. `nodeType` marks the endpoint as one that resolves a
- * pending tool call rather than starting a workflow, which is how the router picks its
- * handler without knowing this node type.
+ * Declared exactly like the Webhook node's own endpoint: `isFullPath` with the `path`
+ * parameter, which `getNodeWebhookPath` reads as `path || node.webhookId`. An empty path
+ * therefore registers the node's own id, and a path given by the user replaces it. Either
+ * way the URL is registered when the workflow is published — before any execution — which
+ * is what lets an external system be told about it up front, and what makes a callback that
+ * beats its tool call addressable at all.
+ *
+ * `nodeType` marks the endpoint as one that resolves a pending tool call rather than
+ * starting a workflow, which is how the router picks its handler without knowing this node
+ * type. It says nothing about the path: routing to this handler and matching the request
+ * are separate steps, and correlation keys on the node's `webhookId`, never on the path.
  */
 const callbackWebhookDescription: IWebhookDescription = {
 	name: 'default',
@@ -51,8 +57,8 @@ const callbackWebhookDescription: IWebhookDescription = {
 	ndvUrlAfterParameter: 'waitIdentifier',
 	...webhookDescriptionFields({
 		httpMethod: fromParameter('httpMethod', 'POST'),
+		path: fromParameter('path'),
 	}),
-	path: '',
 };
 
 /**
@@ -96,6 +102,7 @@ export class ToolWaitForCallback implements INodeType {
 			toolDescriptionProperty,
 			waitIdentifierProperty,
 			callbackMethodProperty,
+			callbackPathProperty,
 			callbackAuthenticationProperty,
 			callbackIdentifierSourceProperty,
 			...callbackIdentifierProperties,
