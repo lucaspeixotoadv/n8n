@@ -3920,6 +3920,8 @@ export interface IWorkflowSettings {
 	saveDataSuccessExecution?: WorkflowSettings.SaveDataExecution;
 	saveManualExecutions?: 'DEFAULT' | boolean;
 	saveExecutionProgress?: 'DEFAULT' | boolean;
+	/** Whether to record each node run as it finishes, so this workflow's executions can be read while they are still running. */
+	liveExecutionProgress?: 'DEFAULT' | boolean;
 	executionTimeout?: number;
 	executionOrder?: 'v0' | 'v1';
 	engineType?: 'v1' | 'v2';

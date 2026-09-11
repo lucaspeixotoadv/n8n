@@ -97,6 +97,7 @@ export interface FrontendSettings {
 	saveDataSuccessExecution: WorkflowSettings.SaveDataExecution;
 	saveManualExecutions: boolean;
 	saveExecutionProgress: boolean;
+	liveExecutionProgress: boolean;
 	executionTimeout: number;
 	maxExecutionTimeout: number;
 	workflowCallerPolicyDefaultOption: WorkflowSettings.CallerPolicy;

@@ -1,8 +1,7 @@
 import type { ExecutionNodeRun, ExecutionNodeRunRepository, IExecutionResponse } from '@n8n/db';
-import type { ExecutionStatus, IRunData, ITaskData } from 'n8n-workflow';
+import type { ExecutionStatus, IRunData, ITaskData, IWorkflowSettings } from 'n8n-workflow';
 import { mock } from 'vitest-mock-extended';
 
-import type { ExecutionJournalConfig } from '@/execution-lifecycle/execution-journal.config';
 import { ExecutionSnapshotService } from '@/executions/execution-snapshot.service';
 
 const task = (marker: string): ITaskData =>
@@ -22,10 +21,15 @@ const journalRow = (
 ): ExecutionNodeRun =>
 	({ executionId: 'exec-1', seq, nodeName, runIndex, taskData }) as ExecutionNodeRun;
 
-const execution = (status: ExecutionStatus, runData: IRunData = {}): IExecutionResponse =>
+const execution = (
+	status: ExecutionStatus,
+	runData: IRunData = {},
+	settings: IWorkflowSettings = { liveExecutionProgress: true },
+): IExecutionResponse =>
 	({
 		id: 'exec-1',
 		status,
+		workflowData: { settings },
 		data: { resultData: { runData, lastNodeExecuted: undefined } },
 	}) as unknown as IExecutionResponse;
 
@@ -36,20 +40,13 @@ describe('ExecutionSnapshotService', () => {
 	beforeEach(() => {
 		repository = mock<ExecutionNodeRunRepository>();
 		repository.findByExecution.mockResolvedValue([]);
-		service = new ExecutionSnapshotService(
-			repository,
-			mock<ExecutionJournalConfig>({ enabled: true }),
-		);
+		service = new ExecutionSnapshotService(repository);
 	});
 
-	it('leaves an execution untouched when journalling is off', async () => {
-		const disabled = new ExecutionSnapshotService(
-			repository,
-			mock<ExecutionJournalConfig>({ enabled: false }),
-		);
-		const running = execution('running', {});
+	it('leaves an execution untouched when its workflow does not journal', async () => {
+		const running = execution('running', {}, { liveExecutionProgress: false });
 
-		expect(await disabled.complete(running)).toBe(running);
+		expect(await service.complete(running)).toBe(running);
 		expect(repository.findByExecution).not.toHaveBeenCalled();
 	});
 

@@ -18,6 +18,9 @@ const OVERSIZED_TASK_PLACEHOLDER = { journalTruncated: true } as const;
  * closes the gap without turning every node into a rewrite of the whole execution, which is
  * what made the existing progress-saving option too expensive to leave on.
  *
+ * Whether a run is journalled at all is the workflow's decision, resolved in `toSaveSettings`
+ * and applied where the hooks are built — this service records what it is handed.
+ *
  * Journalling never fails an execution: a run whose progress could not be recorded is still
  * a run, and the consolidated save remains the authoritative record.
  */
@@ -42,18 +45,12 @@ export class ExecutionJournalService {
 		return Container.get(ExecutionNodeRunRepository);
 	}
 
-	get enabled(): boolean {
-		return this.config.enabled;
-	}
-
 	async recordNodeRun(
 		executionId: string,
 		nodeName: string,
 		taskData: ITaskData,
 		executionData: IRunExecutionData,
 	): Promise<void> {
-		if (!this.config.enabled) return;
-
 		try {
 			const row = new ExecutionNodeRun();
 			row.executionId = executionId;
@@ -79,8 +76,6 @@ export class ExecutionJournalService {
 	async forget(executionId: string): Promise<void> {
 		const highest = this.nextSeq.get(executionId);
 		this.nextSeq.delete(executionId);
-
-		if (!this.config.enabled) return;
 
 		try {
 			await this.repository.deleteUpTo(executionId, (highest ?? 1) - 1);

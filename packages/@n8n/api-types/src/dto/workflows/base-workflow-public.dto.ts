@@ -71,6 +71,7 @@ const workflowNodeGroupWritePublicSchema = z
 const workflowSettingsWritePublicSchema = z
 	.object({
 		saveExecutionProgress: z.boolean().optional(),
+		liveExecutionProgress: z.boolean().optional(),
 		saveManualExecutions: z.boolean().optional(),
 		saveDataErrorExecution: z.enum(['all', 'none']).optional(),
 		saveDataSuccessExecution: z.enum(['all', 'none']).optional(),

@@ -316,10 +316,13 @@ function hookFunctionsPush(
 		});
 
 		pushInstance.sendToExecution(
-				executionId,
-				{ type: 'nodeExecuteBefore', data: { executionId, nodeName, sequenceNumber: nodeEventSequence++, data } },
-				pushRef,
-			);
+			executionId,
+			{
+				type: 'nodeExecuteBefore',
+				data: { executionId, nodeName, sequenceNumber: nodeEventSequence++, data },
+			},
+			pushRef,
+		);
 	});
 	hooks.addHandler('nodeExecuteAfter', async function (nodeName, data, executionData) {
 		const { executionId } = this;
@@ -334,16 +337,19 @@ function hookFunctionsPush(
 		const { data: _, ...taskData } = data;
 
 		pushInstance.sendToExecution(
-				executionId,
-				{ type: 'nodeExecuteAfter', data: {
+			executionId,
+			{
+				type: 'nodeExecuteAfter',
+				data: {
 					executionId,
 					nodeName,
 					sequenceNumber: nodeEventSequence++,
 					itemCountByConnectionType,
 					data: taskData,
-				} },
-				pushRef,
-			);
+				},
+			},
+			pushRef,
+		);
 
 		// Fail-closed redaction: if user cannot be resolved, skip the data push
 		// entirely rather than sending unredacted data to the client.
@@ -389,11 +395,14 @@ function hookFunctionsPush(
 		// extra copies.
 		const asBinary = true;
 		pushInstance.sendToExecution(
-				executionId,
-				{ type: 'nodeExecuteAfterData', data: { executionId, nodeName, itemCountByConnectionType, data: dataToSend } },
-				pushRef,
-				asBinary,
-			);
+			executionId,
+			{
+				type: 'nodeExecuteAfterData',
+				data: { executionId, nodeName, itemCountByConnectionType, data: dataToSend },
+			},
+			pushRef,
+			asBinary,
+		);
 	});
 	hooks.addHandler('workflowExecuteBefore', async function (_workflow, data) {
 		const { executionId } = this;
@@ -439,8 +448,10 @@ function hookFunctionsPush(
 
 		// Always send executionStarted so the editor can initialise the execution UI
 		pushInstance.sendToExecution(
-				executionId,
-				{ type: 'executionStarted', data: {
+			executionId,
+			{
+				type: 'executionStarted',
+				data: {
 					executionId,
 					mode: this.mode,
 					source,
@@ -449,9 +460,10 @@ function hookFunctionsPush(
 					workflowId,
 					workflowName,
 					flattedRunData: stringify(runDataToStringify),
-				} },
-				pushRef,
-			);
+				},
+			},
+			pushRef,
+		);
 	});
 	hooks.addHandler('workflowExecuteAfter', function (fullRunData) {
 		const { executionId } = this;
@@ -522,11 +534,15 @@ function hookFunctionsSaveProgress(
  * run ends, so without a journal a run that is still going — or one that died before that
  * final write — says nothing about how far it got. Unlike `hookFunctionsSaveProgress`,
  * which rewrites the entire execution after every node, this appends one row per run — but
- * it is still a write per node, so it is opt-in, like progress saving itself.
+ * it is still a write per node, so each workflow decides, like progress saving itself.
  */
-function hookFunctionsJournal(hooks: ExecutionLifecycleHooks) {
+function hookFunctionsJournal(
+	hooks: ExecutionLifecycleHooks,
+	{ saveSettings }: HooksSetupParameters,
+) {
+	if (!saveSettings.liveProgress) return;
+
 	const journal = Container.get(ExecutionJournalService);
-	if (!journal.enabled) return;
 
 	hooks.addHandler('nodeExecuteAfter', async function (nodeName, data, executionData) {
 		await journal.recordNodeRun(this.executionId, nodeName, data, executionData);
@@ -838,7 +854,7 @@ export function getLifecycleHooksForSubExecutions(
 	hookFunctionsFinalizeExecutionStatus(hooks);
 	hookFunctionsSave(hooks, { saveSettings, parentExecution });
 	hookFunctionsSaveProgress(hooks, { saveSettings });
-	hookFunctionsJournal(hooks);
+	hookFunctionsJournal(hooks, { saveSettings });
 	hookFunctionsStatistics(hooks);
 	hookFunctionsExternalHooks(hooks);
 	Container.get(ModulesHooksRegistry).addHooks(hooks);
@@ -882,7 +898,7 @@ export function getLifecycleHooksForScalingWorker(
 	hookFunctionsFinalizeExecutionStatus(hooks);
 	hookFunctionsSaveWorker(hooks, optionalParameters);
 	hookFunctionsSaveProgress(hooks, optionalParameters);
-	hookFunctionsJournal(hooks);
+	hookFunctionsJournal(hooks, optionalParameters);
 	hookFunctionsStatistics(hooks, source);
 	hookFunctionsExternalHooks(hooks, source);
 
@@ -929,7 +945,7 @@ export function getLifecycleHooksForScalingMain(
 
 	hookFunctionsWorkflowEvents(hooks, userId, projectId, projectName, source, telemetryMetadata);
 	hookFunctionsSaveProgress(hooks, optionalParameters);
-	hookFunctionsJournal(hooks);
+	hookFunctionsJournal(hooks, optionalParameters);
 	hookFunctionsExternalHooks(hooks, source);
 	hookFunctionsFinalizeExecutionStatus(hooks);
 
@@ -1026,7 +1042,7 @@ export function getLifecycleHooksForRegularMain(
 	hookFunctionsSave(hooks, optionalParameters);
 	hookFunctionsPush(hooks, optionalParameters, userId, source);
 	hookFunctionsSaveProgress(hooks, optionalParameters);
-	hookFunctionsJournal(hooks);
+	hookFunctionsJournal(hooks, optionalParameters);
 	hookFunctionsStatistics(hooks, source);
 	hookFunctionsExternalHooks(hooks, source);
 	Container.get(ModulesHooksRegistry).addHooks(hooks, source);

@@ -32,7 +32,7 @@ describe('ExecutionJournalService', () => {
 
 		return new ExecutionJournalService(
 			mock<Logger>({ scoped: () => mock<Logger>() }) as unknown as Logger,
-			mock<ExecutionJournalConfig>({ enabled: true, maxTaskBytes: 1024, ...overrides }),
+			mock<ExecutionJournalConfig>({ maxTaskBytes: 1024, ...overrides }),
 		);
 	}
 
@@ -114,15 +114,6 @@ describe('ExecutionJournalService', () => {
 		await expect(
 			service.recordNodeRun(EXECUTION_ID, 'A', any, runExecutionData({ A: [any] })),
 		).resolves.toBeUndefined();
-	});
-
-	it('records nothing when journalling is turned off', async () => {
-		const service = makeService({ enabled: false });
-		const any = task('a');
-
-		await service.recordNodeRun(EXECUTION_ID, 'A', any, runExecutionData({ A: [any] }));
-
-		expect(repository.append).not.toHaveBeenCalled();
 	});
 
 	describe('forget', () => {

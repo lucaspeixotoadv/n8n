@@ -229,6 +229,9 @@ export const settingsOpenApi: ZodOpenAPIMetadata = alsoNullable({
 		saveExecutionProgress: {
 			oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['DEFAULT'] }],
 		},
+		liveExecutionProgress: {
+			oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['DEFAULT'] }],
+		},
 		saveManualExecutions: {
 			oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['DEFAULT'] }],
 		},

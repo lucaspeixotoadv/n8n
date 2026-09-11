@@ -73,6 +73,12 @@ export const workflowSettingsObjectSchema = z.object({
 			'Save execution data after each node finishes. Allows resuming/inspecting partial runs at the cost of speed.',
 		)
 		.optional(),
+	liveExecutionProgress: z
+		.union([z.boolean(), z.literal('DEFAULT')])
+		.describe(
+			'Record each node as it finishes, so executions of this workflow can be read while they still run.',
+		)
+		.optional(),
 	saveManualExecutions: z
 		.union([z.boolean(), z.literal('DEFAULT')])
 		.describe('Whether manual (test) executions are saved to the execution list.')

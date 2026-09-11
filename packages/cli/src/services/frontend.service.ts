@@ -20,6 +20,7 @@ import { inE2ETests, N8N_VERSION } from '@/constants';
 import { CredentialTypes } from '@/credential-types';
 import { CredentialsOverwrites } from '@/credentials-overwrites';
 import { resolveEvaluationConcurrencyLimit } from '@/evaluation.ee/evaluation-concurrency.helper';
+import { ExecutionJournalConfig } from '@/execution-lifecycle/execution-journal.config';
 import { License } from '@/license';
 import { LoadNodesAndCredentials } from '@/load-nodes-and-credentials';
 import { MfaService } from '@/mfa/mfa.service';
@@ -205,6 +206,7 @@ export class FrontendService {
 			saveDataSuccessExecution: this.globalConfig.executions.saveDataOnSuccess,
 			saveManualExecutions: this.globalConfig.executions.saveDataManualExecutions,
 			saveExecutionProgress: this.globalConfig.executions.saveExecutionProgress,
+			liveExecutionProgress: Container.get(ExecutionJournalConfig).enabled,
 			executionTimeout: this.globalConfig.executions.timeout,
 			maxExecutionTimeout: this.globalConfig.executions.maxTimeout,
 			workflowCallerPolicyDefaultOption: this.globalConfig.workflows.callerPolicyDefaultOption,

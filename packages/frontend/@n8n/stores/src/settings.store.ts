@@ -73,6 +73,7 @@ export const useSettingsStore = defineStore(STORES.SETTINGS, () => {
 	const saveDataSuccessExecution = ref<WorkflowSettings.SaveDataExecution>('all');
 	const saveManualExecutions = ref(false);
 	const saveDataProgressExecution = ref(false);
+	const liveExecutionProgress = ref(false);
 	const isMFAEnforced = ref(false);
 
 	const isDocker = computed(() => settings.value?.isDocker ?? false);
@@ -345,6 +346,10 @@ export const useSettingsStore = defineStore(STORES.SETTINGS, () => {
 		saveDataProgressExecution.value = newValue;
 	};
 
+	const setLiveExecutionProgress = (newValue: boolean) => {
+		liveExecutionProgress.value = newValue;
+	};
+
 	const getSettings = async () => {
 		const rootStore = useRootStore();
 		const fetchedSettings = await settingsApi.getSettings(rootStore.restApiContext);
@@ -370,6 +375,7 @@ export const useSettingsStore = defineStore(STORES.SETTINGS, () => {
 		setSaveDataErrorExecution(fetchedSettings.saveDataErrorExecution);
 		setSaveDataSuccessExecution(fetchedSettings.saveDataSuccessExecution);
 		setSaveDataProgressExecution(fetchedSettings.saveExecutionProgress);
+		setLiveExecutionProgress(fetchedSettings.liveExecutionProgress);
 		setSaveManualExecutions(fetchedSettings.saveManualExecutions);
 
 		rootStore.setUrlBaseWebhook(fetchedSettings.urlBaseWebhook);
@@ -516,6 +522,7 @@ export const useSettingsStore = defineStore(STORES.SETTINGS, () => {
 		saveDataSuccessExecution,
 		saveManualExecutions,
 		saveDataProgressExecution,
+		liveExecutionProgress,
 		isCommunityPlan,
 		isAskAiEnabled,
 		isAiBuilderEnabled,

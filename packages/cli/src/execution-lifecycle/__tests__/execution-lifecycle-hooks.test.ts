@@ -57,9 +57,7 @@ describe('Execution Lifecycle Hooks', () => {
 	const executionRepository = mockInstance(ExecutionRepository);
 	const executionPersistence = mockInstance(ExecutionPersistence);
 	const executionMetadataService = mockInstance(ExecutionMetadataService);
-	// Journalling is opt-in, so state it here rather than letting the handler counts
-	// below depend on whatever the default happens to be.
-	mockInstance(ExecutionJournalService, { enabled: true });
+	const executionJournalService = mockInstance(ExecutionJournalService);
 	const externalHooks = mockInstance(ExternalHooks);
 	const push = mockInstance(Push);
 	const workflowStaticDataService = mockInstance(WorkflowStaticDataService);
@@ -212,7 +210,8 @@ describe('Execution Lifecycle Hooks', () => {
 		vi.clearAllMocks();
 		userRepository.findOne.mockResolvedValue(mock<User>());
 		redactionProxy.processExecution.mockImplementation(async (execution) => execution);
-		workflowData.settings = {};
+		// Journalling is a per-workflow decision, so the handler counts below depend on it.
+		workflowData.settings = { liveExecutionProgress: true };
 		successfulRun.data = createRunExecutionData({
 			resultData: {
 				runData: {},
@@ -735,7 +734,7 @@ describe('Execution Lifecycle Hooks', () => {
 			});
 
 			it('should save execution progress when enabled', async () => {
-				workflowData.settings = { saveExecutionProgress: true };
+				workflowData.settings = { saveExecutionProgress: true, liveExecutionProgress: true };
 				lifecycleHooks = createHooks();
 
 				expect(lifecycleHooks.handlers.nodeExecuteAfter).toHaveLength(4);
@@ -751,7 +750,7 @@ describe('Execution Lifecycle Hooks', () => {
 			});
 
 			it('should not save execution progress when disabled', async () => {
-				workflowData.settings = { saveExecutionProgress: false };
+				workflowData.settings = { saveExecutionProgress: false, liveExecutionProgress: true };
 				lifecycleHooks = createHooks();
 
 				expect(lifecycleHooks.handlers.nodeExecuteAfter).toHaveLength(3);
@@ -759,6 +758,31 @@ describe('Execution Lifecycle Hooks', () => {
 				await lifecycleHooks.runHook('nodeExecuteAfter', [nodeName, taskData, runExecutionData]);
 
 				expect(executionRepository.findSingleExecution).not.toHaveBeenCalled();
+			});
+
+			it('should journal each node run when the workflow asks for live progress', async () => {
+				workflowData.settings = { liveExecutionProgress: true };
+				lifecycleHooks = createHooks();
+
+				await lifecycleHooks.runHook('nodeExecuteAfter', [nodeName, taskData, runExecutionData]);
+
+				expect(executionJournalService.recordNodeRun).toHaveBeenCalledWith(
+					executionId,
+					nodeName,
+					taskData,
+					runExecutionData,
+				);
+			});
+
+			it('should not journal when the workflow opts out of live progress', async () => {
+				workflowData.settings = { liveExecutionProgress: false };
+				lifecycleHooks = createHooks();
+
+				expect(lifecycleHooks.handlers.nodeExecuteAfter).toHaveLength(2);
+
+				await lifecycleHooks.runHook('nodeExecuteAfter', [nodeName, taskData, runExecutionData]);
+
+				expect(executionJournalService.recordNodeRun).not.toHaveBeenCalled();
 			});
 
 			it('should send redacted data in nodeExecuteAfterData when redaction modifies it', async () => {
@@ -1715,7 +1739,8 @@ describe('Execution Lifecycle Hooks', () => {
 			};
 
 			afterEach(() => {
-				workflowData.settings = {};
+				// Journalling is a per-workflow decision, so the handler counts below depend on it.
+				workflowData.settings = { liveExecutionProgress: true };
 			});
 
 			it('should skip writing run data when a successful execution will be discarded', async () => {
