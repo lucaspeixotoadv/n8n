@@ -14,10 +14,18 @@ import type { CallbackIdentifierResolver } from '../callback-identifier-resolver
 import type { CallbackWaitResumeService } from '../callback-wait-resume.service';
 import type { CallbackWaitService } from '../callback-wait.service';
 import { ToolCallbackWebhooks } from '../tool-callback-webhooks';
+import { isWebhookStaticResponse } from '@/webhooks/webhook-response';
 import type { WebhookService } from '@/webhooks/webhook.service';
 import type { WebhookRequest } from '@/webhooks/webhook.types';
 
 const WEBHOOK_ID = 'endpoint-a';
+
+/** The body of a static webhook response, for asserting what the caller is told. */
+function bodyOf(response: Awaited<ReturnType<ToolCallbackWebhooks['handle']>>) {
+	if (!isWebhookStaticResponse(response)) throw new Error('Expected a static webhook response');
+
+	return response.body;
+}
 
 /**
  * Stands in for the expression engine: reads the node's configured identifier expression
@@ -66,7 +74,10 @@ describe('ToolCallbackWebhooks', () => {
 		return {
 			workflow,
 			node,
-			webhookData: mock<IWebhookData>(),
+			// A description with no response fields, so the endpoint answers its defaults.
+			webhookData: mock<IWebhookData>({
+				webhookDescription: { name: 'default', httpMethod: 'POST', path: '' },
+			}),
 			additionalData: mock<IWorkflowExecuteAdditionalData>(),
 			req: mock<WebhookRequest>({ body, headers, query } as never),
 			res,
@@ -128,19 +139,32 @@ describe('ToolCallbackWebhooks', () => {
 	});
 
 	it('answers the same way for a request with no usable identifier', async () => {
-		await handler.handle(buildRequest({ body: { unrelated: true } }));
+		const response = await handler.handle(buildRequest({ body: { unrelated: true } }));
 
 		expect(callbackWaitService.correlate).not.toHaveBeenCalled();
-		expect(res.status).toHaveBeenCalledWith(200);
+		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
 	});
 
 	it('answers the same way for a duplicate delivery', async () => {
 		callbackWaitService.correlate.mockResolvedValue({ kind: 'ignored' });
 
-		await handler.handle(buildRequest({ body: { id: 125 } }));
+		const response = await handler.handle(buildRequest({ body: { id: 125 } }));
 
 		expect(resumeService.resume).not.toHaveBeenCalled();
-		expect(res.status).toHaveBeenCalledWith(200);
+		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
+	});
+
+	it('answers the same way for a callback that woke an execution', async () => {
+		callbackWaitService.correlate.mockResolvedValue({
+			kind: 'claimed',
+			wait: mock<CallbackWait>({ id: 'row-1' }),
+			payload: { id: 125 },
+		});
+		resumeService.resume.mockResolvedValue('resumed');
+
+		const response = await handler.handle(buildRequest({ body: { id: 125 } }));
+
+		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
 	});
 
 	it('stops when the node already answered the request itself', async () => {

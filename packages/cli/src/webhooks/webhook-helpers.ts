@@ -88,10 +88,7 @@ import * as WorkflowHelpers from '@/workflow-helpers';
 import { WorkflowRunner } from '@/workflow-runner';
 
 import { applySandboxCSP } from './webhook-response-headers';
-import {
-	WebhookResponseHeaders,
-	type WebhookNodeResponseHeaders,
-} from './webhook-response-headers';
+import { WebhookResponseHeaders } from './webhook-response-headers';
 import { WebhookService } from './webhook.service';
 import type { IWebhookResponseCallbackData, WebhookRequest } from './webhook.types';
 
@@ -804,7 +801,7 @@ export async function executeWebhook(
 			};
 		}
 
-		const responseHeaders = evaluateResponseHeaders(context);
+		const responseHeaders = context.evaluateResponseHeaders();
 
 		if (!res.headersSent && responseHeaders) {
 			// Only set given headers if they haven't been sent yet, e.g. for streaming
@@ -1320,27 +1317,6 @@ async function parseRequestBody(
 			await parseBody(req);
 		}
 	}
-}
-
-/**
- * Evaluates the `responseHeaders` parameter of a webhook node
- */
-function evaluateResponseHeaders(context: WebhookExecutionContext): WebhookResponseHeaders {
-	const headers = new WebhookResponseHeaders();
-
-	if (context.webhookData.webhookDescription.responseHeaders === undefined) {
-		return headers;
-	}
-
-	const evaluatedHeaders =
-		context.evaluateComplexWebhookDescriptionExpression<WebhookNodeResponseHeaders>(
-			'responseHeaders',
-		);
-	if (evaluatedHeaders) {
-		headers.addFromNodeHeaders(evaluatedHeaders);
-	}
-
-	return headers;
 }
 
 /**

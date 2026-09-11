@@ -12,6 +12,7 @@ import {
 	resolveWebhookDescriptionField,
 	traverseNodeParameters,
 	WAIT_INDEFINITELY,
+	webhookDescriptionIsNativelyResolvable,
 } from 'n8n-workflow';
 import { mock } from 'vitest-mock-extended';
 
@@ -216,6 +217,20 @@ describe('ToolWaitForCallback', () => {
 
 		it('keeps the generated endpoint when no path is given', () => {
 			expect(endpointOf('')).toBe('endpoint-a');
+		});
+
+		it('resolves every field without the expression engine', () => {
+			expect(webhookDescriptionIsNativelyResolvable(callbackWebhook)).toBe(true);
+		});
+
+		it('answers on receipt, the only mode an endpoint that starts no run can have', () => {
+			const responseMode = resolveWebhookDescriptionField(
+				{ parameters: {} },
+				callbackWebhook,
+				'responseMode',
+			);
+
+			expect(responseMode).toEqual({ resolved: true, value: 'onReceived' });
 		});
 	});
 

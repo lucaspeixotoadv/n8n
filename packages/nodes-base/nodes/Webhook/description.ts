@@ -292,6 +292,83 @@ export const responseBinaryPropertyNameProperty: INodeProperties = {
 	description: 'Name of the binary property to return',
 };
 
+/**
+ * The response fields of a webhook that answers as soon as it receives the request.
+ *
+ * Declared apart from {@link optionsProperty} so a node that serves an endpoint without
+ * running a workflow — the Wait for Callback tool — configures its response with the same
+ * parameters, read by the same `getResponseData` / `WebhookResponseHeaders` code, instead
+ * of growing a second set that drifts.
+ */
+export const noResponseBodyOption: INodeProperties = {
+	displayName: 'No Response Body',
+	name: 'noResponseBody',
+	type: 'boolean',
+	default: false,
+	description: 'Whether to send any body in the response',
+	displayOptions: {
+		hide: {
+			rawBody: [true],
+		},
+		show: {
+			'/responseMode': ['onReceived'],
+		},
+	},
+};
+
+/** @see noResponseBodyOption */
+export const onReceivedResponseDataOption: INodeProperties = {
+	displayName: 'Response Data',
+	name: 'responseData',
+	type: 'string',
+	displayOptions: {
+		show: {
+			'/responseMode': ['onReceived'],
+		},
+		hide: {
+			noResponseBody: [true],
+		},
+	},
+	default: '',
+	placeholder: 'success',
+	description: 'Custom response data to send',
+};
+
+/** @see noResponseBodyOption */
+export const responseHeadersOption: INodeProperties = {
+	displayName: 'Response Headers',
+	name: 'responseHeaders',
+	placeholder: 'Add Response Header',
+	description: 'Add headers to the webhook response',
+	type: 'fixedCollection',
+	typeOptions: {
+		multipleValues: true,
+	},
+	default: {},
+	options: [
+		{
+			name: 'entries',
+			displayName: 'Entries',
+			values: [
+				{
+					displayName: 'Name',
+					name: 'name',
+					type: 'string',
+					default: '',
+					description: 'Name of the header',
+				},
+				{
+					displayName: 'Value',
+					name: 'value',
+					type: 'string',
+					default: '',
+					description: 'Value of the header',
+				},
+			],
+		},
+	],
+};
+
 export const optionsProperty: INodeProperties = {
 	displayName: 'Options',
 	name: 'options',
@@ -366,21 +443,7 @@ export const optionsProperty: INodeProperties = {
 			description:
 				'Comma-separated list of allowed IP addresses or CIDR ranges. Leave empty to allow all IPs.',
 		},
-		{
-			displayName: 'No Response Body',
-			name: 'noResponseBody',
-			type: 'boolean',
-			default: false,
-			description: 'Whether to send any body in the response',
-			displayOptions: {
-				hide: {
-					rawBody: [true],
-				},
-				show: {
-					'/responseMode': ['onReceived'],
-				},
-			},
-		},
+		noResponseBodyOption,
 		{
 			displayName: 'Raw Body',
 			name: 'rawBody',
@@ -411,22 +474,7 @@ export const optionsProperty: INodeProperties = {
 			default: false,
 			description: 'Whether to return the raw body',
 		},
-		{
-			displayName: 'Response Data',
-			name: 'responseData',
-			type: 'string',
-			displayOptions: {
-				show: {
-					'/responseMode': ['onReceived'],
-				},
-				hide: {
-					noResponseBody: [true],
-				},
-			},
-			default: '',
-			placeholder: 'success',
-			description: 'Custom response data to send',
-		},
+		onReceivedResponseDataOption,
 		{
 			displayName: 'Response Content-Type',
 			name: 'responseContentType',
@@ -443,39 +491,7 @@ export const optionsProperty: INodeProperties = {
 			description:
 				'Set a custom content-type to return if another one as the "application/json" should be returned',
 		},
-		{
-			displayName: 'Response Headers',
-			name: 'responseHeaders',
-			placeholder: 'Add Response Header',
-			description: 'Add headers to the webhook response',
-			type: 'fixedCollection',
-			typeOptions: {
-				multipleValues: true,
-			},
-			default: {},
-			options: [
-				{
-					name: 'entries',
-					displayName: 'Entries',
-					values: [
-						{
-							displayName: 'Name',
-							name: 'name',
-							type: 'string',
-							default: '',
-							description: 'Name of the header',
-						},
-						{
-							displayName: 'Value',
-							name: 'value',
-							type: 'string',
-							default: '',
-							description: 'Value of the header',
-						},
-					],
-				},
-			],
-		},
+		responseHeadersOption,
 		{
 			displayName: 'Property Name',
 			name: 'responsePropertyName',

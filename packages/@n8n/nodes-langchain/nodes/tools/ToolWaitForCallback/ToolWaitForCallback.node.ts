@@ -1,8 +1,13 @@
 import { getConnectionHintNoticeField } from '@n8n/ai-utilities';
 import { credentialsProperty } from 'n8n-nodes-base/dist/nodes/Webhook/description';
 import { WebhookAuthorizationError } from 'n8n-nodes-base/dist/nodes/Webhook/error';
-import { validateWebhookAuthentication } from 'n8n-nodes-base/dist/nodes/Webhook/utils';
 import {
+	getResponseCode,
+	getResponseData,
+	validateWebhookAuthentication,
+} from 'n8n-nodes-base/dist/nodes/Webhook/utils';
+import {
+	fromFunction,
 	fromParameter,
 	MAX_CALLBACK_CORRELATION_LENGTH,
 	NodeConnectionTypes,
@@ -27,7 +32,10 @@ import {
 	callbackIdentifierProperties,
 	callbackIdentifierSourceProperty,
 	callbackMethodProperty,
+	callbackOptionsProperty,
 	callbackPathProperty,
+	callbackResponseCodeProperty,
+	callbackResponseModeProperty,
 	callbackUrlNotice,
 	toolDescriptionProperty,
 	waitIdentifierProperty,
@@ -58,6 +66,13 @@ const callbackWebhookDescription: IWebhookDescription = {
 	...webhookDescriptionFields({
 		httpMethod: fromParameter('httpMethod', 'POST'),
 		path: fromParameter('path'),
+		// The response fields the Webhook node declares for an endpoint that answers on
+		// receipt, read by the same resolvers. `ToolCallbackWebhooks` builds the reply from
+		// them, so the response is the node's to configure rather than the handler's to fix.
+		responseMode: fromParameter('responseMode', 'onReceived'),
+		responseCode: fromFunction(getResponseCode),
+		responseData: fromFunction(getResponseData),
+		responseHeaders: fromParameter(['options', 'responseHeaders']),
 	}),
 };
 
@@ -104,8 +119,11 @@ export class ToolWaitForCallback implements INodeType {
 			callbackMethodProperty,
 			callbackPathProperty,
 			callbackAuthenticationProperty,
+			callbackResponseModeProperty,
+			callbackResponseCodeProperty,
 			callbackIdentifierSourceProperty,
 			...callbackIdentifierProperties,
+			callbackOptionsProperty,
 			callbackUrlNotice,
 		],
 	};

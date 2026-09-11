@@ -4,6 +4,7 @@ import type { INode, IWebhookData, IWorkflowExecuteAdditionalData, Workflow } fr
 
 import { WebhookNotFoundError } from '@/errors/response-errors/webhook-not-found.error';
 
+import type { WebhookResponse } from './webhook-response';
 import type { IWebhookResponseCallbackData, WebhookRequest } from './webhook.types';
 
 export type ToolCallbackRequest = {
@@ -17,7 +18,7 @@ export type ToolCallbackRequest = {
 
 /** What the webhook router needs of whoever resolves tool callbacks. */
 export type ToolCallbackHandler = {
-	handle(request: ToolCallbackRequest): Promise<IWebhookResponseCallbackData>;
+	handle(request: ToolCallbackRequest): Promise<IWebhookResponseCallbackData | WebhookResponse>;
 };
 
 /**
@@ -38,7 +39,9 @@ export class ToolCallbackWebhookRegistry {
 		this.handler = handler;
 	}
 
-	async handle(request: ToolCallbackRequest): Promise<IWebhookResponseCallbackData> {
+	async handle(
+		request: ToolCallbackRequest,
+	): Promise<IWebhookResponseCallbackData | WebhookResponse> {
 		if (!this.handler) {
 			// Nothing can resolve this endpoint, so it is indistinguishable from one that was
 			// never registered.

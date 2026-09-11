@@ -2,6 +2,10 @@ import type { INodeProperties } from 'n8n-workflow';
 import {
 	authenticationProperty,
 	httpMethodsProperty,
+	noResponseBodyOption,
+	onReceivedResponseDataOption,
+	responseCodeProperty,
+	responseHeadersOption,
 } from 'n8n-nodes-base/dist/nodes/Webhook/description';
 
 /** Parameter holding the authentication mode, shared with the Webhook node's properties. */
@@ -126,6 +130,50 @@ export const callbackIdentifierProperties: INodeProperties[] = [
 		displayOptions: { show: { callbackIdentifierSource: ['query'] } },
 	},
 ] as INodeProperties[];
+
+/**
+ * When the callback endpoint answers.
+ *
+ * Only "Immediately" is offered, and it is the only mode this endpoint can have. The other
+ * modes of the Webhook node answer from a running workflow: `lastNode` and `responseNode`
+ * both resolve the `responsePromise` that `WebhookHelpers.executeWebhook` hands to
+ * `WorkflowRunner.run`. A callback starts no run — it resumes one that is already parked,
+ * possibly on another instance in queue mode — so there is no such promise to resolve and
+ * no connection the resumed run could reach. The field states that rather than leaving the
+ * response implicit.
+ */
+export const callbackResponseModeProperty: INodeProperties = {
+	displayName: 'Respond',
+	name: 'responseMode',
+	type: 'options',
+	noDataExpression: true,
+	options: [
+		{
+			name: 'Immediately',
+			value: 'onReceived',
+			description: 'As soon as the callback is authenticated and correlated',
+		},
+	],
+	default: 'onReceived',
+	description: 'When and how to respond to the callback',
+};
+
+/** The response code of the callback endpoint, shared with the Webhook node. */
+export const callbackResponseCodeProperty: INodeProperties = responseCodeProperty;
+
+/**
+ * Response body and headers, the same parameters the Webhook node offers for a webhook that
+ * answers on receipt. `getResponseData` and `WebhookResponseHeaders` read them, so there is
+ * no second reading of these fields.
+ */
+export const callbackOptionsProperty: INodeProperties = {
+	displayName: 'Options',
+	name: 'options',
+	type: 'collection',
+	placeholder: 'Add option',
+	default: {},
+	options: [noResponseBodyOption, onReceivedResponseDataOption, responseHeadersOption],
+};
 
 export const callbackUrlNotice: INodeProperties = {
 	displayName:

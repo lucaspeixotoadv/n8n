@@ -10,6 +10,9 @@ import type {
 } from 'n8n-workflow';
 import { resolveWebhookDescriptionField } from 'n8n-workflow';
 
+import type { WebhookNodeResponseHeaders } from './webhook-response-headers';
+import { WebhookResponseHeaders } from './webhook-response-headers';
+
 /** The description's evaluable fields — the symbol key holds the resolver map. */
 type WebhookDescriptionKey = Exclude<keyof IWebhookDescription, symbol>;
 
@@ -66,6 +69,30 @@ export class WebhookExecutionContext {
 			executeData,
 			defaultValue,
 		) as T | undefined;
+	}
+
+	/**
+	 * The response headers the node configured, validated and ready to apply.
+	 *
+	 * Lives here rather than at a caller so every endpoint that answers a webhook request
+	 * builds its headers the same way, whether it starts a workflow or resumes one.
+	 */
+	evaluateResponseHeaders(): WebhookResponseHeaders {
+		const headers = new WebhookResponseHeaders();
+
+		if (this.webhookData.webhookDescription.responseHeaders === undefined) {
+			return headers;
+		}
+
+		const evaluatedHeaders =
+			this.evaluateComplexWebhookDescriptionExpression<WebhookNodeResponseHeaders>(
+				'responseHeaders',
+			);
+		if (evaluatedHeaders) {
+			headers.addFromNodeHeaders(evaluatedHeaders);
+		}
+
+		return headers;
 	}
 
 	/**

@@ -27,6 +27,7 @@ import { matchesExpectedNodeType } from './node-type-matcher';
 import { ToolCallbackWebhookRegistry } from './tool-callback-webhook-registry';
 import type { ExpectedWebhookNodeType } from './node-type-matcher';
 import { sanitizeWebhookRequest } from './webhook-request-sanitizer';
+import type { WebhookResponse } from './webhook-response';
 import type {
 	IWebhookResponseCallbackData,
 	IWebhookManager,
@@ -89,7 +90,7 @@ export class LiveWebhooks implements IWebhookManager {
 		request: WebhookRequest,
 		response: Response,
 		expectedNodeType?: ExpectedWebhookNodeType,
-	): Promise<IWebhookResponseCallbackData> {
+	): Promise<IWebhookResponseCallbackData | WebhookResponse> {
 		const httpMethod = request.method;
 		const path = request.params.path;
 
