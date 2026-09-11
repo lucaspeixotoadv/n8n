@@ -8,6 +8,7 @@ export const CODE_NODE_TYPE = 'n8n-nodes-base.code';
 export const AI_CODE_NODE_TYPE = '@n8n/n8n-nodes-langchain.code';
 export const AI_MCP_TOOL_NODE_TYPE = '@n8n/n8n-nodes-langchain.mcpClientTool';
 export const WIKIPEDIA_TOOL_NODE_TYPE = '@n8n/n8n-nodes-langchain.toolWikipedia';
+export const WAIT_FOR_CALLBACK_TOOL_NODE_TYPE = '@n8n/n8n-nodes-langchain.toolWaitForCallback';
 export const CRON_NODE_TYPE = 'n8n-nodes-base.cron';
 export const CLEARBIT_NODE_TYPE = 'n8n-nodes-base.clearbit';
 export const FILTER_NODE_TYPE = 'n8n-nodes-base.filter';
@@ -154,6 +155,10 @@ export const LIST_LIKE_NODE_OPERATIONS = ['getAll', 'getMany', 'read', 'search']
 export const PRODUCTION_ONLY_TRIGGER_NODE_TYPES = [
 	CHAT_TRIGGER_NODE_TYPE,
 	MICROSOFT_AGENT365_TRIGGER_NODE_TYPE,
+	// A tool callback is only served by the production webhook router. The test router
+	// answers `/webhook-test` requests for `webhook` endpoints only, so a test URL for
+	// this node could never receive a callback.
+	WAIT_FOR_CALLBACK_TOOL_NODE_TYPE,
 ];
 
 export const KEEP_AUTH_IN_NDV_FOR_NODES = [
