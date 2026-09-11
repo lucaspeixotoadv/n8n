@@ -36,6 +36,7 @@ import {
 } from '@/features/execution/executions/executions.utils';
 import { getTriggerNodeServiceName } from '@/app/utils/nodeTypesUtils';
 import type { ExecutionFinished } from '@n8n/api-types/push/execution';
+import { resolveExecutionDocuments } from './executionDocuments';
 import { useI18n } from '@n8n/i18n';
 import type {
 	ExecutionStatus,
@@ -68,6 +69,12 @@ export async function executionFinished({ data }: ExecutionFinished, options: Pu
 	const readyToRunStore = useReadyToRunStore();
 
 	const workflowExecutionStateStore = useWorkflowExecutionStateStore(documentId);
+
+	// Documents that merely display this execution refresh from the server and stop
+	// there: a viewer did not start the run, so none of the toasts, telemetry or
+	// reruns below apply to them.
+	const { watcherDocumentIds } = resolveExecutionDocuments(data.executionId, options);
+	await refreshWatchingDocuments(data.executionId, watcherDocumentIds);
 
 	// Only act on the finish of the execution this document is actually tracking.
 	// Normal match is on the execution id; when the active execution is still
@@ -201,6 +208,45 @@ export async function executionFinished({ data }: ExecutionFinished, options: Pu
 	setRunExecutionData(execution, runExecutionData, documentId);
 
 	continueEvaluationLoop(execution, options);
+}
+
+/**
+ * Brings every document displaying this execution up to its final state.
+ *
+ * A watched run is followed node by node, but the finish carries no data, and the last
+ * events of a run can be trimmed, so the stored execution is the authority on how it
+ * ended.
+ */
+async function refreshWatchingDocuments(
+	executionId: string,
+	documentIds: WorkflowDocumentId[],
+): Promise<void> {
+	if (documentIds.length === 0) {
+		return;
+	}
+
+	for (const documentId of documentIds) {
+		const execution = await fetchExecutionData(executionId, documentId);
+		if (!execution) continue;
+
+		const executionDataStore = useExecutionDataStore(createExecutionDataId(execution.id));
+		const snapshot = executionDataStore.getExecutionSnapshot();
+		if (snapshot === null) continue;
+
+		executionDataStore.setExecution({
+			...snapshot,
+			id: execution.id,
+			status: execution.status,
+			stoppedAt: execution.stoppedAt,
+		});
+		executionDataStore.setExecutionRunData(getRunExecutionData(execution));
+
+		const stateStore = useWorkflowExecutionStateStore(documentId);
+		stateStore.executingNode.clearNodeExecutionQueue();
+		stateStore.setDisplayedExecutionId(execution.id);
+	}
+
+	useNodeHelpers().updateNodesExecutionIssues();
 }
 
 /**

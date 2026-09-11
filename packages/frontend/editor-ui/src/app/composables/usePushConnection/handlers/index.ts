@@ -2,6 +2,7 @@ export * from './agentNodeProgress';
 export * from './builderCreditsUpdated';
 export * from './executionFinished';
 export * from './executionRecovered';
+export * from './executionWaiting';
 export * from './executionStarted';
 export * from './nodeDescriptionUpdated';
 export * from './nodeExecuteAfter';

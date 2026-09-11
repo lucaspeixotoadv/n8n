@@ -20,6 +20,7 @@ import {
 	workflowPartiallyActivated,
 	executionFinished,
 	executionRecovered,
+	executionWaiting,
 	workflowActivated,
 	workflowDeactivated,
 	workflowAutoDeactivated,
@@ -108,6 +109,8 @@ export function usePushConnection({ router }: { router: ReturnType<typeof useRou
 				return await executionFinished(event, options);
 			case 'executionRecovered':
 				return await executionRecovered(event, options);
+			case 'executionWaiting':
+				return await executionWaiting(event, options);
 			case 'workflowActivated':
 				return await workflowActivated(event, options);
 			case 'workflowDeactivated':

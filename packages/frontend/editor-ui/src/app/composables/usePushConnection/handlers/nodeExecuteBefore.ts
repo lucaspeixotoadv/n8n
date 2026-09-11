@@ -1,6 +1,7 @@
 import type { NodeExecuteBefore } from '@n8n/api-types/push/execution';
 import { useWorkflowExecutionStateStore } from '@/app/stores/workflowExecutionState.store';
 import { createExecutionDataId, useExecutionDataStore } from '@/app/stores/executionData.store';
+import { allExecutionDocuments, resolveExecutionDocuments } from './executionDocuments';
 import type { PushHandlerOptions } from './types';
 
 /**
@@ -8,19 +9,22 @@ import type { PushHandlerOptions } from './types';
  */
 export async function nodeExecuteBefore(
 	{ data }: NodeExecuteBefore,
-	{ documentId }: PushHandlerOptions,
+	options: PushHandlerOptions,
 ) {
-	const workflowExecutionStateStore = useWorkflowExecutionStateStore(documentId);
-
-	// Ignore node events that don't belong to the execution this document is
-	// tracking — otherwise a concurrent execution's node would pollute this
-	// document's spinner queue and execution data.
-	const activeExecutionId = workflowExecutionStateStore.activeExecutionId;
-	if (activeExecutionId !== data.executionId) {
+	// Ignore node events for an execution nothing on screen shows — otherwise a
+	// concurrent execution's node would pollute a document's spinner queue and
+	// execution data.
+	const documentIds = allExecutionDocuments(resolveExecutionDocuments(data.executionId, options));
+	if (documentIds.length === 0) {
 		return;
 	}
 
-	workflowExecutionStateStore.executingNode.addExecutingNode(data.nodeName, data.sequenceNumber);
+	for (const documentId of documentIds) {
+		useWorkflowExecutionStateStore(documentId).executingNode.addExecutingNode(
+			data.nodeName,
+			data.sequenceNumber,
+		);
+	}
 
 	useExecutionDataStore(createExecutionDataId(data.executionId)).addNodeExecutionStartedData(data);
 }
