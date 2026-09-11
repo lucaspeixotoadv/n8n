@@ -5,8 +5,6 @@ import { Service } from '@n8n/di';
 import type { Response } from 'express';
 import {
 	Workflow,
-	CHAT_TRIGGER_NODE_TYPE,
-	CHAT_TRIGGER_PATH_SUFFIX,
 	WEBHOOK_NODE_TYPE,
 	nodeParametersAreStatic,
 	webhookDescriptionIsNativelyResolvable,
@@ -58,6 +56,14 @@ export class LiveWebhooks implements IWebhookManager {
 		return await this.webhookService.getWebhookMethods(path);
 	}
 
+	/**
+	 * The access control options of the node serving this endpoint.
+	 *
+	 * The node is taken from the registration that matched the request, which names it. The
+	 * registered path is not always the node's `path` parameter — a full-path webhook falls
+	 * back to the node's id when the parameter is empty, and a node may hold no such
+	 * parameter at all — so the parameter is not what identifies the node here.
+	 */
 	async findAccessControlOptions(path: string, httpMethod: IHttpRequestMethods) {
 		const webhook = await this.findWebhook(path, httpMethod);
 
@@ -66,18 +72,8 @@ export class LiveWebhooks implements IWebhookManager {
 			relations: { activeVersion: true },
 		});
 
-		const isChatWebhookNode = (type: string, webhookId?: string) =>
-			type === CHAT_TRIGGER_NODE_TYPE && `${webhookId}/${CHAT_TRIGGER_PATH_SUFFIX}` === path;
-
-		const nodes = workflowData?.activeVersion?.nodes;
-		const webhookNode = nodes?.find(
-			({ type, parameters, typeVersion, webhookId }) =>
-				(parameters?.path === path &&
-					(parameters?.httpMethod ?? 'GET') === httpMethod &&
-					'webhook' in this.nodeTypes.getByNameAndVersion(type, typeVersion)) ||
-				// Chat Trigger has doesn't have configurable path and is always using POST, so
-				// we need to use webhookId for matching
-				isChatWebhookNode(type, webhookId),
+		const webhookNode = workflowData?.activeVersion?.nodes?.find(
+			({ name }) => name === webhook.node,
 		);
 
 		return webhookNode?.parameters?.options as WebhookAccessControlOptions;

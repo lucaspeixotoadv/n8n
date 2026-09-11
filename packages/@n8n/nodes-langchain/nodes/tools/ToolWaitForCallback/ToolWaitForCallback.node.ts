@@ -116,6 +116,10 @@ export class ToolWaitForCallback implements INodeType {
 		inputs: [],
 		outputs: [NodeConnectionTypes.AiTool],
 		outputNames: ['Tool'],
+		// The endpoint is served by the production webhook router, which reads the node's
+		// access control options, so `Allowed Origins (CORS)` is injected into `options` and
+		// honoured here exactly as it is on the Webhook node.
+		supportsCORS: true,
 		credentials: credentialsProperty(AUTH_PROPERTY_NAME),
 		webhooks: [callbackWebhookDescription],
 		// What the tool is comes first, then the endpoint that resolves it: the URL panel
