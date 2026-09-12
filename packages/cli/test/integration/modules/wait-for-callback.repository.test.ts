@@ -143,6 +143,8 @@ describe('CallbackWaitRepository', () => {
 	});
 
 	describe('retention', () => {
+		const HOUR = 60 * 60 * 1000;
+
 		it('drops resolved rows past their window but keeps live ones', async () => {
 			const resolved = await repository.insertWait({}, NAMESPACE, '125', claim);
 			await repository.markCompleted({}, resolved.id);
@@ -154,6 +156,40 @@ describe('CallbackWaitRepository', () => {
 			expect(await repository.findLive({}, NAMESPACE, '126')).not.toBeNull();
 		});
 
+		it('measures a resolved row from when it resolved, not from when its wait began', async () => {
+			// Registered well before the window, resolved just now: the wait was simply parked
+			// for a long time, and its duplicate guard has to start counting from the resume.
+			const wait = await repository.insertWait({}, NAMESPACE, '125', claim);
+			await repository.update({ id: wait.id }, { createdAt: new Date(Date.now() - 100 * HOUR) });
+			await repository.markCompleted({}, wait.id);
+
+			const removed = await repository.pruneOlderThan(
+				{},
+				new Date(Date.now() - 72 * HOUR),
+				new Date(0),
+			);
+
+			expect(removed).toBe(0);
+			expect(await repository.findLatest({}, NAMESPACE, '125')).toMatchObject({
+				status: 'completed',
+			});
+		});
+
+		it('drops a resolved row once its resolution is past the window', async () => {
+			const wait = await repository.insertWait({}, NAMESPACE, '125', claim);
+			await repository.markCompleted({}, wait.id);
+			await repository.update({ id: wait.id }, { resolvedAt: new Date(Date.now() - 73 * HOUR) });
+
+			const removed = await repository.pruneOlderThan(
+				{},
+				new Date(Date.now() - 72 * HOUR),
+				new Date(0),
+			);
+
+			expect(removed).toBe(1);
+			expect(await repository.findLatest({}, NAMESPACE, '125')).toBeNull();
+		});
+
 		it('drops parked callbacks nobody claimed', async () => {
 			await repository.insertEarlyCallback({}, NAMESPACE, '125', {
 				payload: { id: 125 },
@@ -163,6 +199,40 @@ describe('CallbackWaitRepository', () => {
 			const removed = await repository.pruneOlderThan({}, new Date(0), new Date(Date.now() + 1000));
 
 			expect(removed).toBe(1);
+		});
+	});
+
+	describe('forgetting an execution', () => {
+		it('releases the keys it still holds and keeps its resolved history', async () => {
+			const resolved = await repository.insertWait({}, NAMESPACE, '125', claim);
+			await repository.markCompleted({}, resolved.id);
+			await repository.insertWait({}, NAMESPACE, '126', claim);
+			const claimed = await repository.insertWait({}, NAMESPACE, '127', claim);
+			await repository.claimForResume({}, claimed.id, {
+				payload: { id: 127 },
+				payloadReceivedAt: new Date(),
+			});
+
+			await repository.deleteForExecution({}, claim.executionId);
+
+			expect(await repository.findLive({}, NAMESPACE, '126')).toBeNull();
+			expect(await repository.findLive({}, NAMESPACE, '127')).toBeNull();
+			// A duplicate of the delivery that resolved '125' must still be told from a new
+			// callback after the execution is over, which is the whole reason resolved rows exist.
+			expect(await repository.findLatest({}, NAMESPACE, '125')).toMatchObject({
+				status: 'completed',
+			});
+		});
+
+		it('leaves the rows of other executions alone', async () => {
+			await repository.insertWait({}, NAMESPACE, '125', claim);
+			await repository.insertWait({}, NAMESPACE, '126', { ...claim, executionId: 'exec-2' });
+
+			await repository.deleteForExecution({}, 'exec-1');
+
+			expect(await repository.findLive({}, NAMESPACE, '126')).toMatchObject({
+				executionId: 'exec-2',
+			});
 		});
 	});
 

@@ -243,6 +243,31 @@ describe('ToolCallbackWebhooks', () => {
 		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
 	});
 
+	it('resolves nothing when the node declined the callback', async () => {
+		const request = buildRequest({ body: { id: 125 } });
+		// No `workflowData` is how `webhook()` reports that `Only Run If` rejected the request.
+		webhookService.runWebhook.mockResolvedValue({});
+
+		const response = await handler.handle(request);
+
+		expect(callbackWaitService.correlate).not.toHaveBeenCalled();
+		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
+	});
+
+	it('resolves a callback whose execution is gone, so the key is released', async () => {
+		callbackWaitService.correlate.mockResolvedValue({
+			kind: 'claimed',
+			wait: mock<CallbackWait>({ id: 'row-1' }),
+			payload: { id: 125 },
+		});
+		resumeService.resume.mockResolvedValue('abandoned');
+
+		await handler.handle(buildRequest({ body: { id: 125 } }));
+
+		expect(callbackWaitService.markResolved).toHaveBeenCalledWith('row-1');
+		expect(callbackWaitService.releaseClaim).not.toHaveBeenCalled();
+	});
+
 	it('stops when the node already answered the request itself', async () => {
 		const request = buildRequest({ body: { id: 125 } });
 		webhookService.runWebhook.mockResolvedValue({ noWebhookResponse: true });

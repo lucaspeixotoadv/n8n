@@ -83,11 +83,17 @@ export class CallbackWaitResumeService {
 	/**
 	 * Makes the callback body the parked node's input.
 	 *
-	 * The engine takes it from there: on resume it disables the node that parked, so the
-	 * node passes its input straight through, and `rewireOutputLogTo` puts that output on
-	 * the `ai_tool` channel, which is exactly where the agent collects the results of the
-	 * tool calls it asked for. The agent's own continuation is already on the execution
-	 * stack underneath, so nothing about it has to be rebuilt here.
+	 * The node is disabled so it passes that input straight through instead of registering
+	 * a second wait, and `rewireOutputLogTo` puts the output on the `ai_tool` channel, which
+	 * is exactly where the agent collects the results of the tool calls it asked for. The
+	 * agent's own continuation is already on the execution stack underneath, so nothing
+	 * about it has to be rebuilt here.
+	 *
+	 * Clearing `waitTill` is what keeps the engine out of this. While it is set, the engine
+	 * runs its own waiting-state handling, which pops the last run of the parked node — the
+	 * placeholder `preserveInputOverride` leaves there — so the resumed run would come out
+	 * without the arguments the model passed in. The waiting-webhook resume does the same
+	 * two steps for the same reason.
 	 */
 	private injectCallbackResult(
 		execution: IExecutionResponse,
@@ -110,6 +116,9 @@ export class CallbackWaitResumeService {
 			});
 			return false;
 		}
+
+		stackEntry.node.disabled = true;
+		execution.data.waitTill = undefined;
 
 		stackEntry.node.rewireOutputLogTo = NodeConnectionTypes.AiTool;
 		stackEntry.data.main = [[{ json: payload }]];

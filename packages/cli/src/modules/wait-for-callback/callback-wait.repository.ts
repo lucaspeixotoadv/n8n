@@ -165,8 +165,15 @@ export class CallbackWaitRepository extends BaseRepository<CallbackWait> {
 		return await this.managerFor(ctx).findBy(CallbackWait, { executionId, status: 'resuming' });
 	}
 
+	/**
+	 * Releases the keys an execution still holds. Its resolved rows stay: they are what lets
+	 * a late duplicate be told from a new callback, and retention is what drops them.
+	 */
 	async deleteForExecution(ctx: OperationContext, executionId: string): Promise<void> {
-		await this.managerFor(ctx).delete(CallbackWait, { executionId });
+		await this.managerFor(ctx).delete(CallbackWait, {
+			executionId,
+			status: In(LIVE_CALLBACK_WAIT_STATUSES),
+		});
 	}
 
 	/** How many rows a namespace currently holds, to cap externally driven writes. */
@@ -178,9 +185,12 @@ export class CallbackWaitRepository extends BaseRepository<CallbackWait> {
 	}
 
 	/**
-	 * Drops rows past their retention window. Live rows are only swept once they are older
-	 * than the (much longer) `liveOlderThan` cutoff, so an execution that is legitimately
-	 * parked for a long time is never orphaned by the sweep of resolved history.
+	 * Drops rows past their retention window.
+	 *
+	 * A resolved row is measured from when it resolved, not from when its wait was
+	 * registered: a wait can be parked far longer than the window and still needs its
+	 * duplicate guard once it resolves. A parked callback is measured from its arrival, which
+	 * is when its row was created. Rows of a live wait are never touched.
 	 */
 	async pruneOlderThan(
 		ctx: OperationContext,
@@ -190,7 +200,7 @@ export class CallbackWaitRepository extends BaseRepository<CallbackWait> {
 		const manager = this.managerFor(ctx);
 		const resolved = await manager.delete(CallbackWait, {
 			status: 'completed',
-			createdAt: LessThan(resolvedOlderThan),
+			resolvedAt: LessThan(resolvedOlderThan),
 		});
 		const parked = await manager.delete(CallbackWait, {
 			status: 'pendingCallback',

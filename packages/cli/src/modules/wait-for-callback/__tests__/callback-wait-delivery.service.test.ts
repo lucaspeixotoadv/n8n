@@ -105,4 +105,35 @@ describe('CallbackWaitDeliveryService', () => {
 			makeService().handleWorkflowExecuteAfter(makeContext('waiting')),
 		).resolves.toBeUndefined();
 	});
+
+	it('gives the claim back when the delivery fails, so a later delivery can retry', async () => {
+		callbackWaitService.findUndelivered.mockResolvedValue([undeliveredWait]);
+		resumeService.resume.mockRejectedValue(new Error('runner unavailable'));
+
+		await makeService().handleWorkflowExecuteAfter(makeContext('waiting'));
+
+		// The same rule the endpoint applies: a row left in `resuming` would turn every later
+		// delivery of the event into a no-op and leave the execution parked for good.
+		expect(callbackWaitService.releaseClaim).toHaveBeenCalledWith('row-1');
+		expect(callbackWaitService.markResolved).not.toHaveBeenCalled();
+	});
+
+	it('still swallows the failure when the claim cannot be given back either', async () => {
+		callbackWaitService.findUndelivered.mockResolvedValue([undeliveredWait]);
+		resumeService.resume.mockRejectedValue(new Error('runner unavailable'));
+		callbackWaitService.releaseClaim.mockRejectedValue(new Error('database unavailable'));
+
+		await expect(
+			makeService().handleWorkflowExecuteAfter(makeContext('waiting')),
+		).resolves.toBeUndefined();
+	});
+
+	it('resolves a callback whose execution is gone instead of keeping its claim', async () => {
+		callbackWaitService.findUndelivered.mockResolvedValue([undeliveredWait]);
+		resumeService.resume.mockResolvedValue('abandoned');
+
+		await makeService().handleWorkflowExecuteAfter(makeContext('waiting'));
+
+		expect(callbackWaitService.markResolved).toHaveBeenCalledWith('row-1');
+	});
 });

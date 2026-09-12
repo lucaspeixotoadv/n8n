@@ -90,7 +90,22 @@ export class CallbackWaitDeliveryService {
 					waitId: wait.id,
 					error: error instanceof Error ? error.message : String(error),
 				});
+				// Give the claim back, as the endpoint does, so a later delivery of the same
+				// event can still wake the tool call. A row left in `resuming` would make every
+				// such delivery a no-op and park the execution for good.
+				await this.releaseClaim(wait.id);
 			}
+		}
+	}
+
+	private async releaseClaim(waitId: string): Promise<void> {
+		try {
+			await this.callbackWaitService.releaseClaim(waitId);
+		} catch (error) {
+			this.logger.error('Failed to release the claim of an undelivered callback', {
+				waitId,
+				error: error instanceof Error ? error.message : String(error),
+			});
 		}
 	}
 }

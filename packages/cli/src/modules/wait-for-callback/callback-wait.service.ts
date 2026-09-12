@@ -139,7 +139,10 @@ export class CallbackWaitService implements CallbackWaitProvider {
 		return await this.repository.findUndeliveredForExecution({}, executionId);
 	}
 
-	/** Drops correlation rows of an execution that will never resume. */
+	/**
+	 * Releases the correlation keys an execution still holds, once it will never resume.
+	 * Its resolved rows stay, so a late duplicate is still recognised until retention.
+	 */
 	async forgetExecution(executionId: string): Promise<void> {
 		await this.repository.deleteForExecution({}, executionId);
 	}

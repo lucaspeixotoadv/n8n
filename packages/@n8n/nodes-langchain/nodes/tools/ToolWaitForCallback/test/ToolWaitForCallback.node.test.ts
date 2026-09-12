@@ -1,4 +1,7 @@
 import type { Response } from 'express';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
 	CallbackWaitRegistration,
 	FromAIArgument,
@@ -16,9 +19,18 @@ import {
 	WAIT_INDEFINITELY,
 	webhookDescriptionIsNativelyResolvable,
 } from 'n8n-workflow';
+import { WebhookAuthorizationError } from 'n8n-nodes-base/dist/nodes/Webhook/error';
+import { validateWebhookAuthentication } from 'n8n-nodes-base/dist/nodes/Webhook/utils';
 import { mock } from 'vitest-mock-extended';
 
 import { ToolWaitForCallback } from '../ToolWaitForCallback.node';
+
+// The credential check itself is the Webhook node's, tested there. What is the tool's own is
+// what it does with the outcome, so only that one helper is replaced.
+vi.mock('n8n-nodes-base/dist/nodes/Webhook/utils', async (importOriginal) => ({
+	...(await importOriginal<typeof import('n8n-nodes-base/dist/nodes/Webhook/utils')>()),
+	validateWebhookAuthentication: vi.fn(),
+}));
 
 const NODE = mock<INode>({
 	id: 'node-1',
@@ -253,6 +265,7 @@ describe('ToolWaitForCallback', () => {
 			evaluateExpression?: ReturnType<typeof vi.fn>;
 		} = {}) => {
 			const response = mock<Response>({ writeHead: vi.fn(), end: vi.fn() });
+			const getBodyData = vi.fn(() => body);
 
 			// `Only Run If` is read off the raw parameters, so the node itself must carry them.
 			const node = { ...NODE, parameters: { options } } as INode;
@@ -260,8 +273,8 @@ describe('ToolWaitForCallback', () => {
 			const ctx = mock<IWebhookFunctions>({
 				getNode: () => node,
 				getNodeParameter: ((name: string) => (name === 'options' ? options : 'none')) as never,
-				getBodyData: () => body as never,
-				getHeaderData: () => ({ authorization: 'secret' }),
+				getBodyData: getBodyData as never,
+				getHeaderData: () => ({}),
 				getQueryData: () => ({ trace: 'abc' }),
 				getRequestObject: () =>
 					({ ip, ips: [], contentType, headers: { 'user-agent': userAgent } }) as never,
@@ -270,7 +283,7 @@ describe('ToolWaitForCallback', () => {
 				logger: mock(),
 			});
 
-			return { ctx, response };
+			return { ctx, response, getBodyData };
 		};
 
 		it('returns the callback body and nothing else', async () => {
@@ -421,6 +434,33 @@ describe('ToolWaitForCallback', () => {
 				expect(result.workflowData).toEqual([[{ json: { id: '125', status: 'DONE' } }]]);
 			});
 
+			it('removes the files the callback uploaded, one or many per field', async () => {
+				const dir = await mkdtemp(join(tmpdir(), 'callback-'));
+				const paths = ['receipt.pdf', 'scan-1.png', 'scan-2.png'].map((name) => join(dir, name));
+				await Promise.all(paths.map(async (path) => await writeFile(path, 'bytes')));
+
+				try {
+					const { ctx } = makeWebhookContext({
+						contentType: 'multipart/form-data',
+						body: {
+							data: { id: '125' },
+							files: {
+								receipt: { filepath: paths[0] },
+								scans: [{ filepath: paths[1] }, { filepath: paths[2] }],
+							},
+						},
+					});
+
+					await node.webhook.call(ctx);
+
+					// Nothing else on this path removes them, and the endpoint can be called as often
+					// as an external system likes.
+					for (const path of paths) await expect(access(path)).rejects.toThrow();
+				} finally {
+					await rm(dir, { recursive: true, force: true });
+				}
+			});
+
 			it('yields an object when a multipart callback carries no fields', async () => {
 				const { ctx } = makeWebhookContext({
 					contentType: 'multipart/form-data',
@@ -433,24 +473,66 @@ describe('ToolWaitForCallback', () => {
 			});
 		});
 
-		// A caller must learn that it was refused, never which check refused it.
-		it('answers both gates exactly as it answers a credentials failure', async () => {
-			const blockedAddress = makeWebhookContext({
-				options: { ipWhitelist: '198.51.100.0/24' },
-				ip: '203.0.113.10',
-			});
-			const blockedAgent = makeWebhookContext({
-				options: { ignoreBots: true },
-				userAgent: 'Googlebot/2.1 (+http://www.google.com/bot.html)',
+		describe('credentials', () => {
+			it('refuses a callback the credential check rejects, without reading it', async () => {
+				vi.mocked(validateWebhookAuthentication).mockRejectedValueOnce(
+					new WebhookAuthorizationError(401),
+				);
+				const { ctx, response, getBodyData } = makeWebhookContext({ body: { id: 125 } });
+
+				const result = await node.webhook.call(ctx);
+
+				expect(result).toEqual({ noWebhookResponse: true });
+				expect(response.writeHead).toHaveBeenCalledWith(
+					401,
+					expect.objectContaining({ 'WWW-Authenticate': expect.any(String) }),
+				);
+				expect(getBodyData).not.toHaveBeenCalled();
 			});
 
-			await node.webhook.call(blockedAddress.ctx);
-			await node.webhook.call(blockedAgent.ctx);
+			it('passes the status the check chose through to the caller', async () => {
+				vi.mocked(validateWebhookAuthentication).mockRejectedValueOnce(
+					new WebhookAuthorizationError(500, 'No authentication data defined on node!'),
+				);
+				const { ctx, response } = makeWebhookContext();
 
-			expect(blockedAgent.response.writeHead.mock.calls).toEqual(
-				blockedAddress.response.writeHead.mock.calls,
+				expect(await node.webhook.call(ctx)).toEqual({ noWebhookResponse: true });
+				expect(response.writeHead).toHaveBeenCalledWith(500, expect.anything());
+			});
+
+			it('lets any other failure of the check surface instead of answering for it', async () => {
+				vi.mocked(validateWebhookAuthentication).mockRejectedValueOnce(
+					new Error('credential store unavailable'),
+				);
+				const { ctx, response } = makeWebhookContext();
+
+				await expect(node.webhook.call(ctx)).rejects.toThrow('credential store unavailable');
+				expect(response.writeHead).not.toHaveBeenCalled();
+			});
+		});
+
+		// A caller must learn that it was refused, never which check refused it: every refusal
+		// is written the same way, with the same header, whatever check produced it.
+		it('answers both gates and a credentials failure in the same shape', async () => {
+			const refusals = [
+				makeWebhookContext({ options: { ipWhitelist: '198.51.100.0/24' }, ip: '203.0.113.10' }),
+				makeWebhookContext({
+					options: { ignoreBots: true },
+					userAgent: 'Googlebot/2.1 (+http://www.google.com/bot.html)',
+				}),
+				makeWebhookContext(),
+			];
+			vi.mocked(validateWebhookAuthentication).mockRejectedValueOnce(
+				new WebhookAuthorizationError(401),
 			);
-			expect(blockedAgent.response.end.mock.calls).toEqual(blockedAddress.response.end.mock.calls);
+
+			for (const { ctx } of refusals) {
+				expect(await node.webhook.call(ctx)).toEqual({ noWebhookResponse: true });
+			}
+
+			const headersSent = refusals.map(({ response }) => response.writeHead.mock.calls[0][1]);
+			expect(new Set(headersSent.map((h) => JSON.stringify(h))).size).toBe(1);
+			for (const { response } of refusals) expect(response.end).toHaveBeenCalledTimes(1);
 		});
 	});
 });
