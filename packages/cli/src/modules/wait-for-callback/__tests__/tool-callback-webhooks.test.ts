@@ -8,12 +8,14 @@ import type {
 	Workflow,
 } from 'n8n-workflow';
 import { normalizeCallbackCorrelationValue } from 'n8n-workflow';
+import { Readable } from 'stream';
 import { mock } from 'vitest-mock-extended';
 
 import type { CallbackIdentifierResolver } from '../callback-identifier-resolver';
 import type { CallbackWaitResumeService } from '../callback-wait-resume.service';
 import type { CallbackWaitService } from '../callback-wait.service';
 import { ToolCallbackWebhooks } from '../tool-callback-webhooks';
+import { rawBodyReader } from '@/middlewares';
 import { isWebhookStaticResponse } from '@/webhooks/webhook-response';
 import type { WebhookService } from '@/webhooks/webhook.service';
 import type { WebhookRequest } from '@/webhooks/webhook.types';
@@ -40,6 +42,26 @@ function resolveIdentifier(expression: string, envelope: IDataObject): unknown {
 	return part?.[dotKey ?? bracketKey];
 }
 
+/**
+ * Builds the request the way the server does: a readable stream carrying the raw bytes,
+ * run through `rawBodyReader` so `contentType`, `encoding` and `readRawBody` are the real
+ * ones. The webhook routes are registered before the global body parser, so the handler
+ * has to parse the body itself; handing it a request whose `body` is already an object
+ * would assert nothing about whether it does.
+ */
+function streamRequest(
+	rawBody: string,
+	headers: Record<string, string>,
+	query: IDataObject,
+): WebhookRequest {
+	const req = Readable.from([Buffer.from(rawBody)]) as unknown as WebhookRequest;
+	req.headers = headers;
+	req.query = query as WebhookRequest['query'];
+	rawBodyReader(req, mock<express.Response>(), vi.fn());
+
+	return req;
+}
+
 describe('ToolCallbackWebhooks', () => {
 	const callbackWaitService = mock<CallbackWaitService>();
 	const resumeService = mock<CallbackWaitResumeService>();
@@ -56,13 +78,30 @@ describe('ToolCallbackWebhooks', () => {
 		identifier = '={{ $json.body.id }}',
 	}: {
 		body?: IDataObject;
-		headers?: IDataObject;
+		headers?: Record<string, string>;
 		query?: IDataObject;
 		identifier?: string;
 	}) {
 		const envelope: IDataObject = { body, headers, query, params: {} };
-		const node = mock<INode>({ id: 'node-1', name: 'Wait for Callback', webhookId: WEBHOOK_ID });
-		const workflow = mock<Workflow>({ id: 'wf-1' });
+		const node = mock<INode>({
+			id: 'node-1',
+			name: 'Wait for Callback',
+			webhookId: WEBHOOK_ID,
+			typeVersion: 1,
+		});
+		// The description defines no response fields, so every read reaches the engine with an
+		// undefined value, which the real engine answers with the caller's default.
+		const workflow = mock<Workflow>({
+			id: 'wf-1',
+			expression: mock<Workflow['expression']>({
+				getSimpleParameterValue: vi.fn(
+					(...args: Parameters<Workflow['expression']['getSimpleParameterValue']>) => args[5],
+				),
+				getComplexParameterValue: vi.fn(
+					(...args: Parameters<Workflow['expression']['getComplexParameterValue']>) => args[5],
+				),
+			}),
+		});
 
 		// The node returns only the body as its output; the envelope stays with the correlator.
 		webhookService.runWebhook.mockResolvedValue({ workflowData: [[{ json: body }]] });
@@ -79,7 +118,11 @@ describe('ToolCallbackWebhooks', () => {
 				webhookDescription: { name: 'default', httpMethod: 'POST', path: '' },
 			}),
 			additionalData: mock<IWorkflowExecuteAdditionalData>(),
-			req: mock<WebhookRequest>({ body, headers, query } as never),
+			req: streamRequest(
+				JSON.stringify(body),
+				{ 'content-type': 'application/json', ...headers },
+				query,
+			),
 			res,
 		};
 	}
@@ -108,6 +151,39 @@ describe('ToolCallbackWebhooks', () => {
 			'125',
 			expect.anything(),
 		);
+	});
+
+	it('parses a raw body before the node reads it', async () => {
+		const request = buildRequest({ body: { id: 125, status: 'DONE' } });
+
+		// What the node's `webhook()` sees: `additionalData.httpRequest` is the request the
+		// handler parsed, and `getBodyData()` reads its `body`.
+		let bodySeenByNode: unknown;
+		webhookService.runWebhook.mockImplementation(async (_workflow, _webhookData, _node, data) => {
+			bodySeenByNode = data.httpRequest?.body;
+			return { workflowData: [[{ json: { id: 125 } }]] };
+		});
+
+		await handler.handle(request);
+
+		expect(bodySeenByNode).toEqual({ id: 125, status: 'DONE' });
+	});
+
+	it('leaves the body empty when the request declares no content type', async () => {
+		const request = buildRequest({ body: { id: 125 } });
+		// A body with no `content-type` is not one of the types a webhook parses, so the
+		// raw bytes stay unread and the node gets nothing to correlate on.
+		request.req = streamRequest(JSON.stringify({ id: 125 }), {}, {});
+
+		let bodySeenByNode: unknown;
+		webhookService.runWebhook.mockImplementation(async (_workflow, _webhookData, _node, data) => {
+			bodySeenByNode = data.httpRequest?.body;
+			return { workflowData: [[{ json: {} }]] };
+		});
+
+		await handler.handle(request);
+
+		expect(bodySeenByNode).toBeUndefined();
 	});
 
 	it('normalises a numeric identifier to the same value as its string form', async () => {

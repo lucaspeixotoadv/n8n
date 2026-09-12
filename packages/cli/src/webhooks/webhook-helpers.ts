@@ -5,7 +5,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 
 import { Logger } from '@n8n/backend-common';
-import { ExecutionsConfig, GlobalConfig } from '@n8n/config';
+import { ExecutionsConfig } from '@n8n/config';
 import type { Project } from '@n8n/db';
 import { Container } from '@n8n/di';
 import { createDeferredPromise, type IDeferredPromise } from '@n8n/utils/promise/deferred-promise';
@@ -86,8 +86,7 @@ import * as WorkflowExecuteAdditionalData from '@/workflow-execute-additional-da
 import * as WorkflowHelpers from '@/workflow-helpers';
 import { WorkflowRunner } from '@/workflow-runner';
 
-import { applySandboxCSP } from './webhook-response-headers';
-import { WebhookResponseHeaders } from './webhook-response-headers';
+import { applySandboxCSP, WebhookResponseHeaders } from './webhook-response-headers';
 import { WebhookService } from './webhook.service';
 import type { IWebhookResponseCallbackData, WebhookRequest } from './webhook.types';
 

@@ -85,7 +85,7 @@ export class ToolCallbackWebhooks implements ToolCallbackHandler {
 		const correlationValue = this.identifierResolver.resolve(request);
 		if (correlationValue === null) return this.acknowledge(request);
 
-		const payload = (webhookResult.workflowData[0]?.[0]?.json ?? {}) as IDataObject;
+		const payload = webhookResult.workflowData[0]?.[0]?.json ?? {};
 		const outcome = await this.callbackWaitService.correlate(namespace, correlationValue, payload);
 
 		if (outcome.kind !== 'claimed') return this.acknowledge(request);
