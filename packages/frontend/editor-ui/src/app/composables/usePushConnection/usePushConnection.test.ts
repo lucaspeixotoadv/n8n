@@ -3,6 +3,7 @@ import {
 	testWebhookReceived,
 	builderCreditsUpdated,
 	executionStarted,
+	executionSnapshot,
 	agentNodeProgress,
 } from '@/app/composables/usePushConnection/handlers';
 import type { TestWebhookReceived } from '@n8n/api-types/push/webhook';
@@ -33,6 +34,7 @@ vi.mock('@/app/composables/usePushConnection/handlers', () => ({
 	nodeExecuteAfter: vi.fn(),
 	nodeExecuteAfterData: vi.fn(),
 	executionStarted: vi.fn(),
+	executionSnapshot: vi.fn(),
 	executionWaiting: vi.fn(),
 	sendWorkerStatusMessage: vi.fn(),
 	sendConsoleMessage: vi.fn(),
@@ -126,6 +128,21 @@ describe('usePushConnection composable', () => {
 		pushConnection.terminate();
 
 		expect(removeEventListener).toHaveBeenCalledTimes(1);
+	});
+
+	it('routes the snapshot a subscription starts with to its handler', async () => {
+		const { initialize } = usePushConnection({ router: useRouter() });
+		initialize();
+
+		const event: PushMessage = {
+			type: 'executionSnapshot',
+			data: { executionId: '1', workflowId: '1', status: 'running' },
+		};
+		addEventListener.mock.calls[0][0](event);
+
+		await vi.waitFor(() =>
+			expect(executionSnapshot).toHaveBeenCalledWith(event, expect.anything()),
+		);
 	});
 
 	it('routes agent capability progress to its execution-scoped handler', async () => {

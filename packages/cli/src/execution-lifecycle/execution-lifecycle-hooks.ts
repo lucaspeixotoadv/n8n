@@ -1,4 +1,4 @@
-import { Logger } from '@n8n/backend-common';
+import { LicenseState, Logger } from '@n8n/backend-common';
 import type { User } from '@n8n/db';
 import { ExecutionRepository, UserRepository } from '@n8n/db';
 import { LifecycleMetadata } from '@n8n/decorators';
@@ -285,6 +285,7 @@ function hookFunctionsPush(
 	const pushInstance = Container.get(Push);
 	const redactionProxy = Container.get(ExecutionRedactionServiceProxy);
 	const userRepository = Container.get(UserRepository);
+	const licenseState = Container.get(LicenseState);
 
 	// Lazy user resolution — resolved once, reused across all node events in this execution
 	let resolvedUser: User | null | undefined; // undefined = not yet resolved
@@ -294,6 +295,18 @@ function hookFunctionsPush(
 			? await userRepository.findOne({ where: { id: userId }, relations: ['role'] })
 			: null;
 		return resolvedUser;
+	}
+
+	/**
+	 * Whether run data may be pushed without a user to redact it for.
+	 *
+	 * Redaction is evaluated per reader, and a run started by a trigger has no reader to
+	 * evaluate it for, so its data is withheld — but only where there is a redaction policy
+	 * to withhold it under. An unlicensed instance never redacts, so withholding there would
+	 * keep every watcher of a production run from seeing what it produces, for nothing.
+	 */
+	function mayPushUnredacted(): boolean {
+		return !licenseState.isDataRedactionLicensed();
 	}
 
 	// Monotonic counter over this execution segment's node-event pushes so the UI
@@ -354,7 +367,7 @@ function hookFunctionsPush(
 		// Fail-closed redaction: if user cannot be resolved, skip the data push
 		// entirely rather than sending unredacted data to the client.
 		const user = await getUser();
-		if (!user) {
+		if (!user && !mayPushUnredacted()) {
 			logger.warn('Skipping execution data push: unable to resolve user for redaction', {
 				executionId,
 				nodeName,
@@ -369,22 +382,24 @@ function hookFunctionsPush(
 		// Fail-closed: if redaction throws, skip the data push rather than
 		// sending unredacted data. The metadata-only push above already fired.
 		let dataToSend = data;
-		try {
-			const dummy = buildRedactableExecution(this, { [nodeName]: [data] }, executionData);
-			const result = await redactionProxy.processExecution(dummy, {
-				user,
-				keepOriginal: true,
-			});
-			if (result !== dummy) {
-				dataToSend = result.data.resultData.runData[nodeName][0];
+		if (user) {
+			try {
+				const dummy = buildRedactableExecution(this, { [nodeName]: [data] }, executionData);
+				const result = await redactionProxy.processExecution(dummy, {
+					user,
+					keepOriginal: true,
+				});
+				if (result !== dummy) {
+					dataToSend = result.data.resultData.runData[nodeName][0];
+				}
+			} catch (error) {
+				logger.error('Failed to redact push data, skipping nodeExecuteAfterData', {
+					executionId,
+					nodeName,
+					error,
+				});
+				return;
 			}
-		} catch (error) {
-			logger.error('Failed to redact push data, skipping nodeExecuteAfterData', {
-				executionId,
-				nodeName,
-				error,
-			});
-			return;
 		}
 
 		// We send the node execution data as a WS binary message to the FE. Not
@@ -437,7 +452,9 @@ function hookFunctionsPush(
 				});
 				// runDataToStringify stays {} — fail closed
 			}
-		} else if (hasRunData && !user) {
+		} else if (hasRunData && mayPushUnredacted()) {
+			runDataToStringify = data?.resultData.runData ?? {};
+		} else if (hasRunData) {
 			logger.warn('Cannot redact execution start data: unable to resolve user', {
 				executionId,
 				workflowId,

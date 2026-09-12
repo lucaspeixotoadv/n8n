@@ -543,6 +543,51 @@ export function useExecutionDataStore(id: ExecutionDataId) {
 			fireChange(CHANGE_ACTION.UPDATE);
 		}
 
+		/**
+		 * Folds a later snapshot of the same execution over the displayed run data.
+		 *
+		 * A run is identified by its `executionIndex`, which the engine assigns once per run
+		 * and which every live event and every stored copy of the run carry. A run the
+		 * snapshot brings replaces the displayed one — it is the copy recorded as the run
+		 * finished, redacted for this reader — or is added in engine order if it was not
+		 * displayed yet. A displayed run the snapshot does not know is kept: it reached the
+		 * session as a live event the snapshot was built too early to include. This is what
+		 * makes applying a snapshot idempotent, so the session can be handed one as often as
+		 * it (re)subscribes without losing a step or showing one twice.
+		 */
+		function mergeExecutionRunData(runData: IRunData) {
+			if (!execution.value?.data) return;
+
+			const displayed = execution.value.data.resultData.runData;
+			let changed = false;
+
+			for (const [nodeName, runs] of Object.entries(runData)) {
+				const tasks = displayed[nodeName] ?? [];
+
+				for (const run of runs) {
+					// A snapshot completed from a journal can leave a position unfilled.
+					if (run === undefined) continue;
+
+					const index = tasks.findIndex((task) => task.executionIndex === run.executionIndex);
+					if (index === -1) {
+						tasks.push(run);
+					} else {
+						tasks.splice(index, 1, run);
+					}
+					changed = true;
+				}
+
+				if (tasks.length > 0) {
+					tasks.sort((a, b) => a.executionIndex - b.executionIndex);
+					displayed[nodeName] = tasks;
+				}
+			}
+
+			if (!changed) return;
+
+			commitExecutionMutation(CHANGE_ACTION.UPDATE);
+		}
+
 		function addNodeExecutionStartedData(data: NodeExecuteBefore['data']) {
 			const currentData =
 				executionStartedData.value?.[0] === data.executionId ? executionStartedData.value[1] : {};
@@ -782,6 +827,7 @@ export function useExecutionDataStore(id: ExecutionDataId) {
 			// Write API
 			setExecution,
 			setExecutionRunData,
+			mergeExecutionRunData,
 			addNodeExecutionStartedData,
 			clearExecutionStartedData,
 			updateNodeExecutionStatus,

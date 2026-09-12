@@ -134,6 +134,97 @@ describe('executionData.store', () => {
 		});
 	});
 
+	describe('mergeExecutionRunData', () => {
+		const run = (executionIndex: number, value: string) =>
+			({
+				executionIndex,
+				startTime: executionIndex,
+				executionTime: 1,
+				source: [],
+				executionStatus: 'success',
+				data: { main: [[{ json: { value } }]] },
+			}) as never;
+
+		it('does nothing when no execution is displayed', () => {
+			const store = useExecutionDataStore(createExecutionDataId('exec-1'));
+
+			store.mergeExecutionRunData({ NodeA: [run(0, 'a')] });
+
+			expect(store.execution).toBeNull();
+		});
+
+		it('adds runs it did not display and replaces the ones it did, by execution index', () => {
+			const store = useExecutionDataStore(createExecutionDataId('exec-1'));
+			store.setExecution(
+				createTestExecution({
+					data: { resultData: { runData: { NodeA: [run(0, 'old')] } } } as never,
+				}),
+			);
+
+			store.mergeExecutionRunData({
+				NodeA: [run(0, 'new'), run(2, 'later')],
+				NodeB: [run(1, 'b')],
+			});
+
+			const runData = store.execution?.data?.resultData.runData;
+			expect(runData?.NodeA.map((task) => task.data?.main[0]?.[0]?.json)).toEqual([
+				{ value: 'new' },
+				{ value: 'later' },
+			]);
+			expect(runData?.NodeB).toHaveLength(1);
+		});
+
+		it('keeps a displayed run the snapshot does not carry', () => {
+			const store = useExecutionDataStore(createExecutionDataId('exec-1'));
+			store.setExecution(
+				createTestExecution({
+					data: { resultData: { runData: { NodeA: [run(0, 'a'), run(5, 'live')] } } } as never,
+				}),
+			);
+
+			store.mergeExecutionRunData({ NodeA: [run(0, 'a')] });
+
+			expect(store.execution?.data?.resultData.runData.NodeA).toHaveLength(2);
+		});
+
+		it('keeps runs in engine order whichever order they arrive in', () => {
+			const store = useExecutionDataStore(createExecutionDataId('exec-1'));
+			store.setExecution(
+				createTestExecution({
+					data: { resultData: { runData: { NodeA: [run(4, 'd')] } } } as never,
+				}),
+			);
+
+			store.mergeExecutionRunData({ NodeA: [run(1, 'a'), run(2, 'b')] });
+
+			expect(
+				store.execution?.data?.resultData.runData.NodeA.map((task) => task.executionIndex),
+			).toEqual([1, 2, 4]);
+		});
+
+		it('skips positions a journal-completed snapshot left unfilled', () => {
+			const store = useExecutionDataStore(createExecutionDataId('exec-1'));
+			store.setExecution(createTestExecution());
+			const sparse: unknown[] = [];
+			sparse[1] = run(1, 'b');
+
+			store.mergeExecutionRunData({ NodeA: sparse as never });
+
+			expect(store.execution?.data?.resultData.runData.NodeA).toHaveLength(1);
+		});
+
+		it('signals a change so projections rebuild', async () => {
+			const store = useExecutionDataStore(createExecutionDataId('exec-1'));
+			store.setExecution(createTestExecution());
+			const before = store.executionResultDataLastUpdate;
+			await new Promise((resolve) => setTimeout(resolve, 2));
+
+			store.mergeExecutionRunData({ NodeA: [run(0, 'a')] });
+
+			expect(store.executionResultDataLastUpdate).not.toBe(before);
+		});
+	});
+
 	describe('updateNodeExecutionStatus', () => {
 		it('appends and sets lastNodeExecuted', () => {
 			const store = useExecutionDataStore(createExecutionDataId('exec-1'));

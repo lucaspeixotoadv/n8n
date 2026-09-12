@@ -37,6 +37,7 @@ import {
 import { getTriggerNodeServiceName } from '@/app/utils/nodeTypesUtils';
 import type { ExecutionFinished } from '@n8n/api-types/push/execution';
 import { resolveExecutionDocuments } from './executionDocuments';
+import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
 import { useI18n } from '@n8n/i18n';
 import type {
 	ExecutionStatus,
@@ -216,8 +217,12 @@ export async function executionFinished({ data }: ExecutionFinished, options: Pu
  * A watched run is followed node by node, but the finish carries no data, and the last
  * events of a run can be trimmed, so the stored execution is the authority on how it
  * ended.
+ *
+ * A finished execution emits nothing more, so the documents stop watching it here: the
+ * subscription is released the moment it stops serving a purpose, not when the document
+ * happens to go away.
  */
-async function refreshWatchingDocuments(
+export async function refreshWatchingDocuments(
 	executionId: string,
 	documentIds: WorkflowDocumentId[],
 ): Promise<void> {
@@ -225,7 +230,13 @@ async function refreshWatchingDocuments(
 		return;
 	}
 
+	const executionWatchStore = useExecutionWatchStore();
+
 	for (const documentId of documentIds) {
+		const stateStore = useWorkflowExecutionStateStore(documentId);
+		stateStore.executingNode.clearNodeExecutionQueue();
+		executionWatchStore.unwatchExecution(executionId, documentId);
+
 		const execution = await fetchExecutionData(executionId, documentId);
 		if (!execution) continue;
 
@@ -241,12 +252,8 @@ async function refreshWatchingDocuments(
 		});
 		executionDataStore.setExecutionRunData(getRunExecutionData(execution));
 
-		const stateStore = useWorkflowExecutionStateStore(documentId);
-		stateStore.executingNode.clearNodeExecutionQueue();
 		stateStore.setDisplayedExecutionId(execution.id);
 	}
-
-	useNodeHelpers().updateNodesExecutionIssues();
 }
 
 /**

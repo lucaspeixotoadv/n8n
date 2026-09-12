@@ -32,9 +32,9 @@ export function resolveExecutionDocuments(
 
 	return {
 		ownerDocumentId: isOwner ? documentId : null,
-		watcherDocumentIds: useExecutionWatchStore()
-			.documentsWatching(executionId)
-			.filter((watcherId) => watcherId !== documentId || !isOwner),
+		watcherDocumentIds: [
+			...(useExecutionWatchStore().documentsByExecution.get(executionId) ?? []),
+		].filter((watcherId) => watcherId !== documentId || !isOwner),
 	};
 }
 

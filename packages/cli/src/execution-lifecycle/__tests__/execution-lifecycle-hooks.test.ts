@@ -1,5 +1,5 @@
 import type { PushMessage } from '@n8n/api-types';
-import { Logger } from '@n8n/backend-common';
+import { LicenseState, Logger } from '@n8n/backend-common';
 import { mockInstance, mockLogger } from '@n8n/backend-test-utils';
 import type { Project, User } from '@n8n/db';
 import { ExecutionRepository, UserRepository } from '@n8n/db';
@@ -68,6 +68,9 @@ describe('Execution Lifecycle Hooks', () => {
 	const userRepository = mockInstance(UserRepository);
 	const redactionProxy = mockInstance(ExecutionRedactionServiceProxy);
 	const workflowHookContext = mockInstance(WorkflowHookContextService);
+	// Redaction is licensed unless a test says otherwise: the fail-closed paths only exist
+	// where there is a policy to fail closed under.
+	const licenseState = mockInstance(LicenseState);
 
 	/**
 	 * The error-workflow dispatch is deliberately fire-and-forget: the hook does
@@ -209,6 +212,7 @@ describe('Execution Lifecycle Hooks', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		userRepository.findOne.mockResolvedValue(mock<User>());
+		licenseState.isDataRedactionLicensed.mockReturnValue(true);
 		redactionProxy.processExecution.mockImplementation(async (execution) => execution);
 		// Journalling is a per-workflow decision, so the handler counts below depend on it.
 		workflowData.settings = { liveExecutionProgress: true };
@@ -935,9 +939,67 @@ describe('Execution Lifecycle Hooks', () => {
 
 				expect(redactionProxy.processExecution).not.toHaveBeenCalled();
 			});
+
+			it('sends nodeExecuteAfterData without a user where redaction is not licensed', async () => {
+				licenseState.isDataRedactionLicensed.mockReturnValue(false);
+				lifecycleHooks = getLifecycleHooksForRegularMain(
+					{ executionMode: 'webhook', workflowData, pushRef, retryOf, userId: undefined },
+					executionId,
+				);
+
+				const mockTaskData: ITaskData = {
+					startTime: 1,
+					executionTime: 1,
+					executionIndex: 0,
+					source: [],
+					data: { main: [[{ json: { key: 'value' } }]] },
+				};
+
+				await lifecycleHooks.runHook('nodeExecuteAfter', [
+					nodeName,
+					mockTaskData,
+					runExecutionData,
+				]);
+
+				// Nothing would be redacted, so there is nothing to withhold: the data goes out.
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
+					expect.objectContaining({
+						type: 'nodeExecuteAfterData',
+						data: expect.objectContaining({ data: mockTaskData }),
+					}),
+					pushRef,
+					true,
+				);
+				expect(redactionProxy.processExecution).not.toHaveBeenCalled();
+			});
 		});
 
 		describe('workflowExecuteBefore', () => {
+			it('sends the run data without a user where redaction is not licensed', async () => {
+				licenseState.isDataRedactionLicensed.mockReturnValue(false);
+				lifecycleHooks = getLifecycleHooksForRegularMain(
+					{ executionMode: 'webhook', workflowData, pushRef, retryOf, userId: undefined },
+					executionId,
+				);
+				const runData = { [nodeName]: [{ executionIndex: 0 } as ITaskData] };
+
+				await lifecycleHooks.runHook('workflowExecuteBefore', [
+					workflow,
+					createRunExecutionData({ resultData: { runData } }),
+				]);
+
+				expect(push.sendToExecution).toHaveBeenCalledWith(
+					executionId,
+					expect.objectContaining({
+						type: 'executionStarted',
+						data: expect.objectContaining({ flattedRunData: stringify(runData) }),
+					}),
+					pushRef,
+				);
+				expect(redactionProxy.processExecution).not.toHaveBeenCalled();
+			});
+
 			it('should send executionStarted push event', async () => {
 				await lifecycleHooks.runHook('workflowExecuteBefore', [workflow, runExecutionData]);
 

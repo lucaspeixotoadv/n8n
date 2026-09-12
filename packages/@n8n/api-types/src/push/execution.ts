@@ -25,6 +25,31 @@ export type ExecutionStarted = {
 	};
 };
 
+/**
+ * What an execution has done so far, sent to a session the moment it subscribes to the
+ * execution, and before any later event of that execution.
+ *
+ * The session that started a run gets its baseline inside `executionStarted`; a session
+ * that opens a run already in progress gets it here, on the same channel as the events
+ * that follow, so nothing can fall between the baseline and the stream. A subscription
+ * that is renewed after a lost connection gets a fresh one, which is how the session
+ * catches up on what it missed.
+ */
+export type ExecutionSnapshot = {
+	type: 'executionSnapshot';
+	data: {
+		executionId: string;
+		workflowId: string;
+		status: ExecutionStatus;
+		/**
+		 * The run data so far, `flatted`-stringified. Absent when the execution has no run
+		 * data yet, or when it is too large to send, in which case the session keeps what it
+		 * has and the terminal fetch completes it.
+		 */
+		flattedRunData?: string;
+	};
+};
+
 export type ExecutionWaiting = {
 	type: 'executionWaiting';
 	data: {
@@ -141,6 +166,7 @@ export type NodeExecuteAfterData = {
 
 export type ExecutionPushMessage =
 	| ExecutionStarted
+	| ExecutionSnapshot
 	| ExecutionWaiting
 	| ExecutionFinished
 	| ExecutionRecovered
