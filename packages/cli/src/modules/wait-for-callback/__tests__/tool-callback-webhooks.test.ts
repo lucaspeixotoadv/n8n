@@ -57,7 +57,7 @@ function streamRequest(
 	const req = Readable.from([Buffer.from(rawBody)]) as unknown as WebhookRequest;
 	req.headers = headers;
 	req.query = query as WebhookRequest['query'];
-	rawBodyReader(req, mock<express.Response>(), vi.fn());
+	void rawBodyReader(req, mock<express.Response>(), vi.fn());
 
 	return req;
 }

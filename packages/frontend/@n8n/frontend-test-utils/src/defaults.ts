@@ -91,6 +91,7 @@ export const defaultSettings: FrontendSettings = {
 	saveDataSuccessExecution: 'all',
 	saveManualExecutions: false,
 	saveExecutionProgress: false,
+	liveExecutionProgress: false,
 	sso: {
 		managedByEnv: false,
 		ldap: { loginEnabled: false, loginLabel: '' },

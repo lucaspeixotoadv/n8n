@@ -148,6 +148,8 @@ requestBody:
             properties:
               saveExecutionProgress:
                 type: boolean
+              liveExecutionProgress:
+                type: boolean
               saveManualExecutions:
                 type: boolean
               saveDataErrorExecution:
@@ -719,6 +721,12 @@ responses:
               description: Execution and behaviour settings for the workflow
               properties:
                 saveExecutionProgress:
+                  oneOf:
+                    - type: boolean
+                    - type: string
+                      enum:
+                        - DEFAULT
+                liveExecutionProgress:
                   oneOf:
                     - type: boolean
                     - type: string

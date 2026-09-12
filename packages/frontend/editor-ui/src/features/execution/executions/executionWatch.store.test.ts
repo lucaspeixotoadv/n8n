@@ -1,4 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia';
+import type { Mock } from 'vitest';
 
 import { createWorkflowDocumentId } from '@/app/stores/workflowDocument.store';
 import { usePushConnectionStore } from '@/app/stores/pushConnection.store';
@@ -9,12 +10,12 @@ describe('executionWatch.store', () => {
 	const documentB = createWorkflowDocumentId('wf-b');
 
 	let store: ReturnType<typeof useExecutionWatchStore>;
-	let send: ReturnType<typeof vi.fn>;
+	let send: Mock<(message: unknown) => void>;
 
 	beforeEach(() => {
 		setActivePinia(createPinia());
 		store = useExecutionWatchStore();
-		send = vi.fn();
+		send = vi.fn<(message: unknown) => void>();
 		vi.spyOn(usePushConnectionStore(), 'send').mockImplementation(send);
 	});
 
