@@ -105,7 +105,10 @@ export class ToolWaitForCallback implements INodeType {
 		iconColor: 'crimson',
 		group: ['transform'],
 		version: 1,
-		description: 'Suspend the agent until an external system calls back',
+		// Also what the model reads when the tool description is left empty: the suspension and
+		// what it does to the other tool calls of a turn are the contract, not a detail.
+		description:
+			'Suspend the agent until an external system calls back. Tool calls made after this one in the same turn run only once the callback has arrived.',
 		waitingNodeTooltip:
 			"Waiting for a callback on this node's URL. The execution resumes when a request arrives whose Callback Identifier matches the Wait Identifier this tool call registered — see the node's output for the identifier it is waiting on.",
 		defaults: { name: 'Wait for Callback' },
@@ -200,6 +203,21 @@ export class ToolWaitForCallback implements INodeType {
 				{
 					description:
 						'Wait for Callback needs an AI Agent that runs tools through the workflow engine (AI Agent version 3 or later).',
+				},
+			);
+		}
+
+		// Suspending in the middle of a tool call batch only works under the requested
+		// execution order. The legacy order enqueues the batch the other way round and resumes
+		// the agent before its tools have run, so a wait registered there could never hand its
+		// result back. An unset order is the legacy one, which is how the engine reads it too.
+		if (this.getWorkflowSettings().executionOrder !== 'v1') {
+			throw new NodeOperationError(
+				node,
+				'This tool needs the workflow execution logic "v1 (recommended)"',
+				{
+					description:
+						'Wait for Callback suspends the run in the middle of a tool call batch, which the legacy execution logic "v0" does not support. Open the workflow settings and set "Execution Logic" to "v1 (recommended)".',
 				},
 			);
 		}

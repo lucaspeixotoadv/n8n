@@ -10,9 +10,11 @@ import type {
 	INode,
 	IWebhookDescription,
 	IWebhookFunctions,
+	IWorkflowSettings,
 } from 'n8n-workflow';
 import {
 	getNodeWebhookPath,
+	getToolDescriptionForNode,
 	NodeOperationError,
 	resolveWebhookDescriptionField,
 	traverseNodeParameters,
@@ -24,6 +26,7 @@ import { validateWebhookAuthentication } from 'n8n-nodes-base/dist/nodes/Webhook
 import { mock } from 'vitest-mock-extended';
 
 import { ToolWaitForCallback } from '../ToolWaitForCallback.node';
+import { toolDescriptionProperty } from '../descriptions';
 
 // The credential check itself is the Webhook node's, tested there. What is the tool's own is
 // what it does with the outcome, so only that one helper is replaced.
@@ -44,16 +47,19 @@ const NODE = mock<INode>({
 function makeExecuteContext({
 	waitIdentifier = '125',
 	toolCallId = 'call-1',
+	workflowSettings = { executionOrder: 'v1' },
 	registerCallbackWait = vi.fn(),
 }: {
 	waitIdentifier?: unknown;
 	toolCallId?: string;
+	workflowSettings?: IWorkflowSettings;
 	registerCallbackWait?: ReturnType<typeof vi.fn>;
 } = {}) {
 	return mock<IExecuteFunctions>({
 		getNode: () => NODE,
 		getExecutionId: () => 'exec-1',
 		getWorkflow: () => ({ id: 'wf-1' }) as never,
+		getWorkflowSettings: () => workflowSettings,
 		getInputData: () => [{ json: { toolCallId, query: 'anything' } }],
 		getNodeParameter: ((name: string) =>
 			name === 'waitIdentifier' ? waitIdentifier : undefined) as never,
@@ -107,6 +113,30 @@ describe('ToolWaitForCallback', () => {
 					callbackIdentifier: '={{ $json.headers["x-request-id"] }}',
 				}),
 			).not.toContain('callbackIdentifier');
+		});
+	});
+
+	// Tool calls of one turn run one after another in the order the model listed them, and this
+	// call suspends the run in place. The model can only learn that from the description, so
+	// both texts the runtime can hand it carry that clause.
+	describe('tool description', () => {
+		const withToolDescription = (toolDescription: string) =>
+			({ ...NODE, parameters: { toolDescription } }) as INode;
+
+		it('tells the model that later calls of the same turn wait for the callback, by default', () => {
+			const description = getToolDescriptionForNode(
+				withToolDescription(toolDescriptionProperty.default as string),
+				node,
+			);
+
+			expect(description).toMatch(/calls listed before this one run first/);
+			expect(description).toMatch(/calls listed after it run only once the callback has arrived/);
+		});
+
+		it('keeps that clause when the tool description is left empty', () => {
+			const description = getToolDescriptionForNode(withToolDescription(''), node);
+
+			expect(description).toMatch(/run only once the callback has arrived/);
 		});
 	});
 
@@ -201,12 +231,29 @@ describe('ToolWaitForCallback', () => {
 			expect(ctx.putExecutionToWait).not.toHaveBeenCalled();
 		});
 
+		it.each<[string, IWorkflowSettings]>([
+			['the legacy order', { executionOrder: 'v0' }],
+			['no order set, which the engine treats as legacy', {}],
+		])('refuses to run under %s', async (_case, workflowSettings) => {
+			const registerCallbackWait = vi.fn();
+			const ctx = makeExecuteContext({ workflowSettings, registerCallbackWait });
+
+			// A batch under the legacy order resumes the agent before its tools ran, so a wait
+			// registered there could never hand its result back: refuse before registering.
+			await expect(node.execute.call(ctx)).rejects.toThrow('v1 (recommended)');
+			expect(registerCallbackWait).not.toHaveBeenCalled();
+			expect(ctx.putExecutionToWait).not.toHaveBeenCalled();
+		});
+
 		it('refuses to park when the runtime grants no way to register a wait', async () => {
 			// This is also what an agent that calls its tools in-process looks like: the
-			// helper is only granted on the engine's node-execution path.
-			const ctx = mock<IExecuteFunctions>({ getNode: () => NODE, helpers: {} as never });
+			// helper is only granted on the engine's node-execution path. The mock proxies a
+			// nested object, so the helper is removed explicitly rather than left out.
+			const ctx = makeExecuteContext();
+			(ctx as { helpers: unknown }).helpers = { registerCallbackWait: undefined };
 
-			await expect(node.execute.call(ctx)).rejects.toThrow(NodeOperationError);
+			await expect(node.execute.call(ctx)).rejects.toThrow('cannot register a callback wait');
+			expect(ctx.putExecutionToWait).not.toHaveBeenCalled();
 		});
 	});
 

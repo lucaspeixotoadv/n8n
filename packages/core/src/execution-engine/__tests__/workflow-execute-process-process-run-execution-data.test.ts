@@ -13,6 +13,7 @@ import {
 	BaseError,
 	NodeConnectionTypes,
 	UnexpectedError,
+	WAIT_INDEFINITELY,
 	createRunExecutionData,
 } from 'n8n-workflow';
 import { mock } from 'vitest-mock-extended';
@@ -696,6 +697,148 @@ describe('processRunExecutionData', () => {
 				responseMetadata: { requestId: 'test_request_step1' },
 				actionCount: 2,
 			});
+		});
+
+		test('a tool that suspends mid-batch keeps its position: earlier calls run first, later ones after the resume', async () => {
+			// ARRANGE
+			// Only the requested order 'v1' gives the batch this shape: the legacy order enqueues
+			// with `push` and resumes the requester before its tools ran.
+			let response: EngineResponse | undefined;
+			const startedNodes = () =>
+				runHook.mock.calls.filter((c) => c[0] === 'nodeExecuteBefore').map((c) => c[1][0]);
+
+			const tool1 = createNodeData({ name: 'tool1', type: types.passThrough });
+			const tool2 = createNodeData({ name: 'tool2', type: types.passThrough });
+			const tool3 = createNodeData({ name: 'tool3', type: types.passThrough });
+			const waitNode = createNodeData({ name: 'wait', type: 'suspendingTool' });
+
+			const suspendingTool: INodeType = {
+				...passThroughNode,
+				async execute(this: IExecuteFunctions) {
+					await this.putExecutionToWait(WAIT_INDEFINITELY);
+					return [[{ json: { status: 'waiting' } }]];
+				},
+			};
+
+			const action = (nodeName: string, id: string) => ({
+				actionType: 'ExecutionNodeAction' as const,
+				nodeName,
+				input: { arg: id },
+				type: 'ai_tool' as const,
+				id,
+				metadata: { itemIndex: 0 },
+			});
+			const agentType = modifyNode(passThroughNode)
+				.return({
+					actions: [
+						action(tool1.name, 'call_1'),
+						action(waitNode.name, 'call_2'),
+						action(tool2.name, 'call_3'),
+						action(tool3.name, 'call_4'),
+					],
+					metadata: {},
+				})
+				.return((r) => {
+					response = r;
+					return [[{ json: { done: true } }]];
+				})
+				.done();
+			const agent = createNodeData({ name: 'agent', type: 'agentType' });
+
+			const nodeTypes = NodeTypes({
+				...nodeTypeArguments,
+				agentType: { type: agentType, sourcePath: '' },
+				suspendingTool: { type: suspendingTool, sourcePath: '' },
+			});
+			const workflow = new DirectedGraph()
+				.addNodes(agent, tool1, tool2, tool3, waitNode)
+				.addConnections({ from: tool1, to: agent, type: 'ai_tool' })
+				.addConnections({ from: tool2, to: agent, type: 'ai_tool' })
+				.addConnections({ from: tool3, to: agent, type: 'ai_tool' })
+				.addConnections({ from: waitNode, to: agent, type: 'ai_tool' })
+				.toWorkflow({ name: '', active: false, nodeTypes, settings: { executionOrder: 'v1' } });
+
+			const executionData = createRunExecutionData({
+				startData: { startNodes: [{ name: agent.name, sourceData: null }] },
+				executionData: {
+					nodeExecutionStack: [
+						{
+							data: { main: [[{ json: { prompt: 'p' } }]] },
+							node: agent,
+							source: { main: [{ previousNode: 'Start' }] },
+						},
+					],
+				},
+			});
+
+			// ACT 1: run until the tool suspends
+			const parkedRun = await new WorkflowExecute(
+				additionalData,
+				executionMode,
+				executionData,
+			).processRunExecutionData(workflow);
+			const parked: IRunExecutionData = parkedRun.data;
+
+			// ASSERT 1: the calls before the suspending tool ran, the rest is still on the stack
+			expect(startedNodes()).toEqual([agent.name, tool1.name, waitNode.name]);
+			expect(parkedRun.status).toBe('waiting');
+			expect(parked.waitTill).toBeDefined();
+			expect(parked.resultData.lastNodeExecuted).toBe(waitNode.name);
+			expect(parked.executionData!.nodeExecutionStack.map((e) => e.node.name)).toEqual([
+				waitNode.name,
+				tool2.name,
+				tool3.name,
+				agent.name,
+			]);
+			expect(response).toBeUndefined();
+
+			// ACT 2: resume the way the waiting-webhook and callback paths do — disable the
+			// parked node, clear `waitTill`, make the external result its input, and leave the
+			// placeholder that keeps its `inputOverride`.
+			const entry = parked.executionData!.nodeExecutionStack[0];
+			entry.node.disabled = true;
+			entry.node.rewireOutputLogTo = NodeConnectionTypes.AiTool;
+			entry.data.main = [[{ json: { callback: 'body' } }]];
+			entry.metadata = { ...entry.metadata, forwardAllOutputs: true };
+			parked.waitTill = undefined;
+			const waitRuns = parked.resultData.runData[waitNode.name];
+			const { inputOverride, source } = waitRuns.pop()!;
+			waitRuns.push({ startTime: 0, executionTime: 0, executionIndex: 0, source, inputOverride });
+
+			runHook.mockClear();
+			const resumedRun = await new WorkflowExecute(
+				additionalData,
+				executionMode,
+				parked,
+			).processRunExecutionData(workflow);
+
+			// ASSERT 2: the remaining calls ran after the resume, then the agent got all of them
+			expect(startedNodes()).toEqual([waitNode.name, tool2.name, tool3.name]);
+			expect(resumedRun.status).toBe('success');
+
+			const aggregated = (response?.actionResponses ?? []).map((r) => ({
+				id: r.action.id,
+				output: r.data.data?.ai_tool?.[0]?.[0]?.json,
+				hasInputOverride: r.data.inputOverride !== undefined,
+			}));
+			expect(aggregated).toEqual([
+				{
+					id: 'call_1',
+					output: expect.objectContaining({ toolCallId: 'call_1' }),
+					hasInputOverride: true,
+				},
+				{ id: 'call_2', output: { callback: 'body' }, hasInputOverride: true },
+				{
+					id: 'call_3',
+					output: expect.objectContaining({ toolCallId: 'call_3' }),
+					hasInputOverride: true,
+				},
+				{
+					id: 'call_4',
+					output: expect.objectContaining({ toolCallId: 'call_4' }),
+					hasInputOverride: true,
+				},
+			]);
 		});
 
 		test('executes requested tools in the order the actions were requested', async () => {

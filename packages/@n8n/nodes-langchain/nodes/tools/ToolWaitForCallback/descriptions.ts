@@ -17,17 +17,23 @@ export const AUTH_PROPERTY_NAME = 'callbackAuthentication';
 /**
  * What the LLM is told the tool does. Kept as the shared tool description property so the
  * schema generator and the NDV treat it exactly like every other AI tool node.
+ *
+ * The default states the two things the model cannot infer from the schema: that the call
+ * suspends the run, and what that does to the other calls of the same turn. Tool calls of one
+ * turn run one after another in the order the model listed them, so a call placed after this
+ * one waits for the callback. This text is the whole contract — there is no other channel to
+ * the model — and it is the user's to keep when they rewrite the description.
  */
 export const toolDescriptionProperty: INodeProperties = {
 	displayName: 'Description',
 	name: 'toolDescription',
 	type: 'string',
 	default:
-		'Suspend this conversation until an external system calls back about a job. Provide the identifier the external system will report the result under.',
+		'Suspend this conversation until an external system calls back about a job. Provide the identifier the external system will report the result under; the callback body is returned as the result of this call. This call suspends the run: when you make several tool calls in one turn, the calls listed before this one run first, and the calls listed after it run only once the callback has arrived. Use a distinct identifier for each job you wait on.',
 	required: true,
-	typeOptions: { rows: 3 },
+	typeOptions: { rows: 5 },
 	description:
-		'Explain to the LLM what this tool does. A specific description makes the model call it at the right moment.',
+		'Explain to the LLM what this tool does. Keep the note on suspension: tool calls of one turn run in order, so a call placed after this one runs only after the callback arrives.',
 };
 
 /**
