@@ -68,7 +68,7 @@ export class CallbackWaitResumeService {
 
 		if (!this.injectCallbackResult(execution, wait, payload)) return 'abandoned';
 
-		await this.startResume(execution, executionId);
+		await this.startResume(execution, executionId, wait.userId);
 
 		this.eventService.emit('execution-resumed', {
 			executionId,
@@ -129,7 +129,22 @@ export class CallbackWaitResumeService {
 		return true;
 	}
 
-	private async startResume(execution: IExecutionResponse, executionId: string): Promise<void> {
+	/**
+	 * Hands the execution back to the runner as the waiting-webhook resume does.
+	 *
+	 * No `startedAt`: the runner reads it as "this run's timeout is measured from then", which
+	 * is what a timed wait wants and what a wait on an external event must not have. With a
+	 * timeout configured, a callback arriving later than the timeout after the original start
+	 * would stop the execution the moment it resumed. The segment gets a fresh timeout instead.
+	 *
+	 * The user is the one the run parked as, so the resumed segment is pushed to the UI the
+	 * same way: the push hooks fail closed without a user and send no node data at all.
+	 */
+	private async startResume(
+		execution: IExecutionResponse,
+		executionId: string,
+		userId: string | null,
+	): Promise<void> {
 		const workflowId = execution.workflowData.id;
 		const project = await this.ownershipService.getWorkflowProjectCached(workflowId);
 
@@ -139,7 +154,7 @@ export class CallbackWaitResumeService {
 			workflowData: execution.workflowData,
 			projectId: project.id,
 			pushRef: execution.data.pushRef,
-			startedAt: execution.startedAt,
+			userId: userId ?? undefined,
 		};
 
 		try {

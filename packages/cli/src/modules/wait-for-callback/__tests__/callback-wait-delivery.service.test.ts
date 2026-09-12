@@ -32,12 +32,12 @@ describe('CallbackWaitDeliveryService', () => {
 	const resumeService = mock<CallbackWaitResumeService>();
 	const publisher = mock<Publisher>();
 
-	function makeService(isWorker = false) {
+	function makeService({ isWorker = false, isLeader = true } = {}) {
 		return new CallbackWaitDeliveryService(
 			mock<Logger>({ scoped: () => mock<Logger>() }) as unknown as Logger,
 			callbackWaitService,
 			resumeService,
-			mock<InstanceSettings>({ isWorker }),
+			mock<InstanceSettings>({ isWorker, isLeader }),
 			publisher,
 		);
 	}
@@ -79,7 +79,7 @@ describe('CallbackWaitDeliveryService', () => {
 	it('relays the delivery to a main instead of resuming from a worker', async () => {
 		callbackWaitService.findUndelivered.mockResolvedValue([undeliveredWait]);
 
-		await makeService(true).handleWorkflowExecuteAfter(makeContext('waiting'));
+		await makeService({ isWorker: true }).handleWorkflowExecuteAfter(makeContext('waiting'));
 
 		expect(publisher.publishCommand).toHaveBeenCalledWith({
 			command: 'deliver-pending-callbacks',
@@ -126,6 +126,39 @@ describe('CallbackWaitDeliveryService', () => {
 		await expect(
 			makeService().handleWorkflowExecuteAfter(makeContext('waiting')),
 		).resolves.toBeUndefined();
+	});
+
+	describe('claims a lost process left behind', () => {
+		const otherWait = {
+			id: 'row-2',
+			executionId: 'exec-2',
+			status: 'resuming',
+			payload: { id: 126 },
+		} as unknown as CallbackWait;
+
+		it('re-drives every unconfirmed delivery when the leader takes over', async () => {
+			callbackWaitService.findAllUndelivered.mockResolvedValue([undeliveredWait, otherWait]);
+			resumeService.resume.mockResolvedValue('resumed');
+
+			await makeService().recoverClaimedDeliveries();
+
+			// A row stuck in `resuming` makes every later delivery of its event a no-op, so
+			// nothing else would ever wake the execution it belongs to.
+			expect(resumeService.resume).toHaveBeenCalledWith(undeliveredWait, { id: 125 });
+			expect(resumeService.resume).toHaveBeenCalledWith(otherWait, { id: 126 });
+			expect(callbackWaitService.markResolved).toHaveBeenCalledWith('row-1');
+			expect(callbackWaitService.markResolved).toHaveBeenCalledWith('row-2');
+		});
+
+		it('starts that recovery on the leader only', async () => {
+			callbackWaitService.findAllUndelivered.mockResolvedValue([]);
+
+			makeService({ isLeader: false }).init();
+			expect(callbackWaitService.findAllUndelivered).not.toHaveBeenCalled();
+
+			makeService({ isLeader: true }).init();
+			await vi.waitFor(() => expect(callbackWaitService.findAllUndelivered).toHaveBeenCalled());
+		});
 	});
 
 	it('resolves a callback whose execution is gone instead of keeping its claim', async () => {

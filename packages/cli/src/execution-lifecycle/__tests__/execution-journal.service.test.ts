@@ -10,14 +10,21 @@ import { ExecutionJournalService } from '@/execution-lifecycle/execution-journal
 
 const EXECUTION_ID = 'exec-1';
 
-const task = (marker: string): ITaskData =>
+const task = (
+	marker: string,
+	position: { executionIndex?: number; startTime?: number } = {},
+): ITaskData =>
 	({
-		startTime: 0,
+		startTime: position.startTime ?? 0,
 		executionTime: 0,
-		executionIndex: 0,
+		executionIndex: position.executionIndex ?? 0,
 		source: [],
 		data: { main: [[{ json: { marker } }]] },
 	}) as unknown as ITaskData;
+
+/** A run entry the engine pre-allocated for a tool call: no data yet, zero timings. */
+const placeholder = (): ITaskData =>
+	({ startTime: 0, executionTime: 0, executionIndex: 0, source: [] }) as unknown as ITaskData;
 
 const runExecutionData = (runData: Record<string, ITaskData[]>): IRunExecutionData =>
 	({ resultData: { runData } }) as unknown as IRunExecutionData;
@@ -36,8 +43,7 @@ describe('ExecutionJournalService', () => {
 		);
 	}
 
-	const appended = (): ExecutionNodeRun[] =>
-		repository.append.mock.calls.flatMap(([rows]) => rows);
+	const appended = (): ExecutionNodeRun[] => repository.append.mock.calls.flatMap(([rows]) => rows);
 
 	it('records a node run as it finishes', async () => {
 		const service = makeService();
@@ -90,6 +96,36 @@ describe('ExecutionJournalService', () => {
 			'Loop',
 			secondRun,
 			runExecutionData({ Loop: [task('first'), secondRun] }),
+		);
+
+		expect(appended()[0].runIndex).toBe(1);
+	});
+
+	it('records a run the engine merged into a placeholder at that placeholder, not at the end', async () => {
+		const service = makeService();
+		// Two calls to one tool in a batch: two placeholders up front. The first finishes, and
+		// the engine copies its task onto the first placeholder rather than storing the object.
+		const finished = task('first call', { executionIndex: 3, startTime: 1_000 });
+		const merged = { ...placeholder(), ...finished };
+
+		await service.recordNodeRun(
+			EXECUTION_ID,
+			'Tool',
+			finished,
+			runExecutionData({ Tool: [merged, placeholder()] }),
+		);
+
+		expect(appended()[0].runIndex).toBe(0);
+	});
+
+	it('falls back to the last run when nothing identifies the task', async () => {
+		const service = makeService();
+
+		await service.recordNodeRun(
+			EXECUTION_ID,
+			'Tool',
+			task('unmatched', { executionIndex: 9, startTime: 9_000 }),
+			runExecutionData({ Tool: [task('a'), task('b')] }),
 		);
 
 		expect(appended()[0].runIndex).toBe(1);

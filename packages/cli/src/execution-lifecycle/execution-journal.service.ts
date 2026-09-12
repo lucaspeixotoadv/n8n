@@ -105,7 +105,15 @@ export class ExecutionJournalService {
 		return seq;
 	}
 
-	/** Where this task sits among the node's runs, as the engine has recorded them. */
+	/**
+	 * Where this task sits among the node's runs, as the engine has recorded them.
+	 *
+	 * A run the engine merged into a placeholder — every agent tool call, and a node resumed
+	 * from a wait — is not the object handed to the hook, so identity is tried first and
+	 * `executionIndex` with `startTime` second: the merge copies both onto the placeholder,
+	 * and a placeholder that is still empty carries zeros a real run never has. Only then
+	 * fall back to the last run, which is right for a node that simply appended.
+	 */
 	private resolveRunIndex(
 		executionData: IRunExecutionData,
 		nodeName: string,
@@ -114,8 +122,16 @@ export class ExecutionJournalService {
 		const runs = executionData.resultData.runData[nodeName];
 		if (!runs) return 0;
 
-		const index = runs.lastIndexOf(taskData);
-		return index === -1 ? Math.max(runs.length - 1, 0) : index;
+		const byIdentity = runs.lastIndexOf(taskData);
+		if (byIdentity !== -1) return byIdentity;
+
+		const byPosition = runs.findIndex(
+			(run) =>
+				run.executionIndex === taskData.executionIndex && run.startTime === taskData.startTime,
+		);
+		if (byPosition !== -1) return byPosition;
+
+		return Math.max(runs.length - 1, 0);
 	}
 
 	private withinSizeLimit(taskData: ITaskData): boolean {

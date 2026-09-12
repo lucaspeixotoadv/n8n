@@ -5,15 +5,26 @@ import { createExecutionDataId, useExecutionDataStore } from '@/app/stores/execu
 import { parse } from 'flatted';
 import { createRunExecutionData } from 'n8n-workflow';
 import type { IRunExecutionData } from 'n8n-workflow';
+import { resolveExecutionDocuments } from './executionDocuments';
 import type { PushHandlerOptions } from './types';
 
 /**
  * Handles the 'executionStarted' event, which happens when a workflow is executed.
  */
-export async function executionStarted(
-	{ data }: ExecutionStarted,
-	{ documentId }: PushHandlerOptions,
-) {
+export async function executionStarted({ data }: ExecutionStarted, options: PushHandlerOptions) {
+	const { documentId } = options;
+	// A run that parked and is now resuming starts again. A document merely watching it
+	// learned it was waiting from `executionWaiting`, and this is the one event that says
+	// it is running again; its node events keep updating the data it already shows.
+	const { watcherDocumentIds } = resolveExecutionDocuments(data.executionId, options);
+	if (watcherDocumentIds.length > 0) {
+		const watchedStore = useExecutionDataStore(createExecutionDataId(data.executionId));
+		const watched = watchedStore.getExecutionSnapshot();
+		if (watched !== null && watched.status === 'waiting') {
+			watchedStore.setExecution({ ...watched, status: 'running' });
+		}
+	}
+
 	const workflowDocumentStore = useWorkflowDocumentStore(documentId);
 	const workflowExecutionStateStore = useWorkflowExecutionStateStore(documentId);
 	const isIframe = window !== window.parent;

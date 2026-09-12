@@ -23,6 +23,7 @@ const claim = {
 	toolCallId: 'call-1',
 	nodeId: 'node-1',
 	workflowId: 'wf-1',
+	userId: 'user-1',
 };
 
 function makeRow(overrides: Partial<CallbackWait> = {}): CallbackWait {
@@ -78,7 +79,25 @@ describe('CallbackWaitService', () => {
 				expect.anything(),
 				NAMESPACE,
 				'125',
-				expect.objectContaining({ executionId: 'exec-1', nodeId: 'node-1' }),
+				expect.objectContaining({ executionId: 'exec-1', nodeId: 'node-1', userId: 'user-1' }),
+			);
+		});
+
+		it('records a run that has no user as such', async () => {
+			repository.findLive.mockResolvedValue(null);
+
+			await service.registerWait({
+				namespace: NAMESPACE,
+				correlationValue: '125',
+				...claim,
+				userId: undefined,
+			});
+
+			expect(repository.insertWait).toHaveBeenCalledWith(
+				expect.anything(),
+				NAMESPACE,
+				'125',
+				expect.objectContaining({ userId: null }),
 			);
 		});
 

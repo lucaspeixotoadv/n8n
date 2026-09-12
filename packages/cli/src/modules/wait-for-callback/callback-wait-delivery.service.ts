@@ -1,10 +1,16 @@
 import { Logger } from '@n8n/backend-common';
-import { OnLifecycleEvent, OnPubSubEvent, type WorkflowExecuteAfterContext } from '@n8n/decorators';
+import {
+	OnLeaderTakeover,
+	OnLifecycleEvent,
+	OnPubSubEvent,
+	type WorkflowExecuteAfterContext,
+} from '@n8n/decorators';
 import { Service } from '@n8n/di';
 import { InstanceSettings } from 'n8n-core';
 import { WAIT_FOR_CALLBACK_TOOL_TYPE } from 'n8n-workflow';
 
 import { CallbackWaitResumeService } from './callback-wait-resume.service';
+import type { CallbackWait } from './callback-wait.entity';
 import { CallbackWaitService } from './callback-wait.service';
 
 import { Publisher } from '@/scaling/pubsub/publisher.service';
@@ -20,6 +26,11 @@ import { Publisher } from '@/scaling/pubsub/publisher.service';
  * The same event also cleans up after an execution that ended without resuming — cancelled,
  * failed, or finished — so its correlation keys are released instead of holding an
  * identifier hostage for a wait that can never be woken.
+ *
+ * A claim outlives the process that took it. A process lost between claiming a delivery and
+ * confirming it leaves a row in `resuming` that every later delivery of the event treats as
+ * handled, so the leader re-drives such rows when it takes over: the resume is a compare-
+ * and-set on the execution, so re-driving one that did go through is a no-op.
  */
 @Service()
 export class CallbackWaitDeliveryService {
@@ -31,6 +42,21 @@ export class CallbackWaitDeliveryService {
 		private readonly publisher: Publisher,
 	) {
 		this.logger = this.logger.scoped('waiting-executions');
+	}
+
+	init() {
+		if (this.instanceSettings.isLeader) void this.recoverClaimedDeliveries();
+	}
+
+	@OnLeaderTakeover()
+	async recoverClaimedDeliveries(): Promise<void> {
+		const undelivered = await this.callbackWaitService.findAllUndelivered();
+		if (undelivered.length === 0) return;
+
+		this.logger.info('Re-driving callback deliveries a previous process left unconfirmed', {
+			count: undelivered.length,
+		});
+		await this.deliverRows(undelivered);
 	}
 
 	@OnLifecycleEvent('workflowExecuteAfter')
@@ -76,8 +102,10 @@ export class CallbackWaitDeliveryService {
 	 * execution has moved on.
 	 */
 	private async deliverPending(executionId: string): Promise<void> {
-		const undelivered = await this.callbackWaitService.findUndelivered(executionId);
+		await this.deliverRows(await this.callbackWaitService.findUndelivered(executionId));
+	}
 
+	private async deliverRows(undelivered: CallbackWait[]): Promise<void> {
 		for (const wait of undelivered) {
 			try {
 				const outcome = await this.resumeService.resume(wait, wait.payload ?? {});
@@ -86,7 +114,7 @@ export class CallbackWaitDeliveryService {
 				await this.callbackWaitService.markResolved(wait.id);
 			} catch (error) {
 				this.logger.error('Failed to deliver a callback that arrived before its wait parked', {
-					executionId,
+					executionId: wait.executionId,
 					waitId: wait.id,
 					error: error instanceof Error ? error.message : String(error),
 				});

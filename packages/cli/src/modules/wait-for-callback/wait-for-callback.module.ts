@@ -13,8 +13,8 @@ import { Container } from '@n8n/di';
 @BackendModule({ name: 'wait-for-callback' })
 export class WaitForCallbackModule implements ModuleInterface {
 	async init() {
-		// Imported for its `@OnLifecycleEvent` registration, which happens at module load.
-		await import('./callback-wait-delivery.service.js');
+		const { CallbackWaitDeliveryService } = await import('./callback-wait-delivery.service.js');
+		Container.get(CallbackWaitDeliveryService).init();
 
 		const { ToolCallbackWebhookRegistry } = await import(
 			'@/webhooks/tool-callback-webhook-registry.js'

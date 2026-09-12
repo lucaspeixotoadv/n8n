@@ -12,6 +12,7 @@ const claim = {
 	toolCallId: 'call-1',
 	nodeId: 'node-1',
 	workflowId: 'wf-1',
+	userId: 'user-1',
 };
 
 describe('CallbackWaitRepository', () => {
@@ -97,6 +98,28 @@ describe('CallbackWaitRepository', () => {
 		});
 	});
 
+	describe('the user of the parked run', () => {
+		it('is kept on the wait so the resume can run as that user', async () => {
+			await repository.insertWait({}, NAMESPACE, '125', claim);
+
+			expect(await repository.findLive({}, NAMESPACE, '125')).toMatchObject({ userId: 'user-1' });
+		});
+
+		it('is stamped onto a parked callback the run consumes', async () => {
+			const parked = await repository.insertEarlyCallback({}, NAMESPACE, '125', {
+				payload: { id: 125 },
+				payloadReceivedAt: new Date(),
+			});
+			expect(parked.userId).toBeNull();
+
+			await repository.claimEarlyCallback({}, parked.id, claim);
+
+			expect(await repository.findLatest({}, NAMESPACE, '125')).toMatchObject({
+				userId: 'user-1',
+			});
+		});
+	});
+
 	describe('the resume claim', () => {
 		it('lets exactly one caller move a wait to resuming', async () => {
 			const wait = await repository.insertWait({}, NAMESPACE, '125', claim);
@@ -126,6 +149,22 @@ describe('CallbackWaitRepository', () => {
 			await repository.releaseResumeClaim({}, wait.id);
 
 			expect(await repository.findLive({}, NAMESPACE, '125')).toMatchObject({ status: 'waiting' });
+		});
+
+		it('reports every unconfirmed delivery, whichever execution it belongs to', async () => {
+			const first = await repository.insertWait({}, NAMESPACE, '125', claim);
+			const second = await repository.insertWait({}, NAMESPACE, '126', {
+				...claim,
+				executionId: 'exec-2',
+			});
+			await repository.insertWait({}, NAMESPACE, '127', { ...claim, executionId: 'exec-3' });
+			const record = { payload: { id: 1 }, payloadReceivedAt: new Date() };
+			await repository.claimForResume({}, first.id, record);
+			await repository.claimForResume({}, second.id, record);
+
+			const undelivered = await repository.findAllUndelivered({});
+
+			expect(undelivered.map((w) => w.executionId).sort()).toEqual(['exec-1', 'exec-2']);
 		});
 
 		it('reports the rows of an execution whose payload landed before it parked', async () => {

@@ -17,7 +17,12 @@ export function getCallbackWaitHelperFunctions(
 	if (!provider) return {};
 
 	return {
+		// The node knows nothing about who started the run; the runtime does. Carrying the
+		// user over is what lets the resumed segment be pushed to the UI as this one is.
 		registerCallbackWait: async (registration: CallbackWaitRegistration) =>
-			await provider.registerWait(registration),
+			await provider.registerWait({
+				userId: additionalData.userId,
+				...registration,
+			}),
 	};
 }

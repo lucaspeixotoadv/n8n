@@ -27,6 +27,7 @@ function makeWait(overrides: Partial<CallbackWait> = {}): CallbackWait {
 		toolCallId: 'call-1',
 		nodeId: NODE_ID,
 		workflowId: 'wf-1',
+		userId: 'user-1',
 		payload: null,
 		payloadReceivedAt: new Date(),
 		resolvedAt: null,
@@ -140,6 +141,34 @@ describe('CallbackWaitResumeService', () => {
 		expect(execution.data.resultData.runData[NODE_NAME]).toEqual([
 			expect.objectContaining({ inputOverride: MODEL_ARGUMENTS }),
 		]);
+	});
+
+	it('resumes as the user the run parked as, so the segment stays observable', async () => {
+		executionPersistence.findSingleExecution.mockResolvedValue(makeExecution('waiting'));
+
+		await service.resume(makeWait({ userId: 'user-1' }), { id: 125 });
+
+		// The push hooks fail closed without a user: no node data reaches the UI at all.
+		const [data] = workflowRunner.run.mock.calls[0];
+		expect(data.userId).toBe('user-1');
+	});
+
+	it('resumes a run that parked without a user without one', async () => {
+		executionPersistence.findSingleExecution.mockResolvedValue(makeExecution('waiting'));
+
+		await service.resume(makeWait({ userId: null }), { id: 125 });
+
+		expect(workflowRunner.run.mock.calls[0][0].userId).toBeUndefined();
+	});
+
+	it('gives the resumed segment a fresh timeout instead of one measured from the original start', async () => {
+		executionPersistence.findSingleExecution.mockResolvedValue(makeExecution('waiting'));
+
+		await service.resume(makeWait(), { id: 125 });
+
+		// With `startedAt` the runner subtracts the time already spent — a park longer than the
+		// workflow timeout would then stop the execution the moment it resumed.
+		expect(workflowRunner.run.mock.calls[0][0]).not.toHaveProperty('startedAt');
 	});
 
 	it('reports the resume as coming from a webhook', async () => {

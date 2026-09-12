@@ -1177,6 +1177,11 @@ export type CallbackWaitRegistration = {
 	toolCallId?: string;
 	nodeId: string;
 	workflowId?: string;
+	/**
+	 * The user the run was started as, when it was started by one. The resumed segment
+	 * runs as the same user, so it stays as observable as the segment that parked.
+	 */
+	userId?: string;
 };
 
 /**

@@ -81,6 +81,10 @@ export class CallbackWait extends WithTimestampsAndStringId {
 	@Column({ type: 'varchar', length: 36, nullable: true })
 	workflowId: string | null;
 
+	/** The user the parked run was started as, so the resume runs as the same user. */
+	@Column({ type: 'varchar', length: 36, nullable: true })
+	userId: string | null;
+
 	/** The callback body, and only the body — headers and query never reach the agent. */
 	@JsonColumn({ nullable: true })
 	payload: IDataObject | null;

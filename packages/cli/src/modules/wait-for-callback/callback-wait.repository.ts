@@ -18,6 +18,7 @@ export type CallbackWaitClaim = {
 	toolCallId: string | null;
 	nodeId: string;
 	workflowId: string | null;
+	userId: string | null;
 };
 
 export const buildActiveKey = (namespace: string, correlationValue: string) =>
@@ -96,6 +97,7 @@ export class CallbackWaitRepository extends BaseRepository<CallbackWait> {
 			toolCallId: null,
 			nodeId: null,
 			workflowId: null,
+			userId: null,
 			resolvedAt: null,
 			...record,
 		});
@@ -155,6 +157,14 @@ export class CallbackWaitRepository extends BaseRepository<CallbackWait> {
 			{ id, status: 'resuming' },
 			{ status: 'waiting' },
 		);
+	}
+
+	/**
+	 * Every claimed delivery that has not been confirmed, across executions. A claim survives
+	 * the process that took it, so this is what a leader re-drives on takeover.
+	 */
+	async findAllUndelivered(ctx: OperationContext): Promise<CallbackWait[]> {
+		return await this.managerFor(ctx).findBy(CallbackWait, { status: 'resuming' });
 	}
 
 	/** Rows whose payload arrived while their execution had not parked yet. */

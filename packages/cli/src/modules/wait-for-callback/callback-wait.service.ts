@@ -58,6 +58,7 @@ export class CallbackWaitService implements CallbackWaitProvider {
 			toolCallId: registration.toolCallId ?? null,
 			nodeId: registration.nodeId,
 			workflowId: registration.workflowId ?? null,
+			userId: registration.userId ?? null,
 		};
 
 		return await this.transactionRunner.run({}, async (ctx) => {
@@ -137,6 +138,11 @@ export class CallbackWaitService implements CallbackWaitProvider {
 	/** Deliveries whose payload landed before the execution had finished parking. */
 	async findUndelivered(executionId: string): Promise<CallbackWait[]> {
 		return await this.repository.findUndeliveredForExecution({}, executionId);
+	}
+
+	/** Every claimed delivery not yet confirmed, whichever execution it belongs to. */
+	async findAllUndelivered(): Promise<CallbackWait[]> {
+		return await this.repository.findAllUndelivered({});
 	}
 
 	/**

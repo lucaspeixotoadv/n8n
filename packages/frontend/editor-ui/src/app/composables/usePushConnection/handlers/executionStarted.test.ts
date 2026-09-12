@@ -9,6 +9,8 @@ import {
 import type { ExecutionStarted } from '@n8n/api-types/push/execution';
 import { useWorkflowExecutionStateStore } from '@/app/stores/workflowExecutionState.store';
 import { createExecutionDataId, useExecutionDataStore } from '@/app/stores/executionData.store';
+import { usePushConnectionStore } from '@/app/stores/pushConnection.store';
+import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
 import type { PushHandlerOptions } from './types';
 
 describe('executionStarted', () => {
@@ -32,6 +34,20 @@ describe('executionStarted', () => {
 		workflowDocumentStore.setName('My Workflow');
 
 		workflowExecutionStateStore = useWorkflowExecutionStateStore(documentId);
+	});
+
+	it('marks an execution a document watches as running again when it resumes', async () => {
+		vi.spyOn(usePushConnectionStore(), 'send').mockImplementation(() => {});
+		useExecutionWatchStore().watchExecution('exec-1', documentId);
+		const executionDataStore = useExecutionDataStore(createExecutionDataId('exec-1'));
+		// What `executionWaiting` left behind when the run parked.
+		executionDataStore.setExecution({ id: 'exec-1', status: 'waiting' } as never);
+
+		await executionStarted(makeEvent('exec-1'), options);
+
+		expect(executionDataStore.execution?.status).toBe('running');
+		// A watcher did not start the run: it must not take it over as its own.
+		expect(workflowExecutionStateStore.activeExecutionId).toBeUndefined();
 	});
 
 	it('should skip when activeExecutionId is undefined', async () => {
