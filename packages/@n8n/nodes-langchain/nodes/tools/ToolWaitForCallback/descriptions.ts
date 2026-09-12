@@ -89,56 +89,26 @@ export const callbackPathProperty: INodeProperties = {
 export const callbackAuthenticationProperty: INodeProperties =
 	authenticationProperty(AUTH_PROPERTY_NAME);
 
-export const callbackIdentifierSourceProperty: INodeProperties = {
-	displayName: 'Callback Identifier Source',
-	name: 'callbackIdentifierSource',
-	type: 'options',
-	noDataExpression: true,
-	default: 'body',
-	options: [
-		{ name: 'Body', value: 'body' },
-		{ name: 'Header', value: 'headers' },
-		{ name: 'Query', value: 'query' },
-	],
-	description:
-		'Which part of the incoming request carries the identifier. This only picks the default expression below; the value itself is always resolved as one expression over the whole request.',
-};
-
 /**
  * How the identifier is read out of the incoming request.
  *
- * Three declarations of one parameter, so each source starts from a correct expression and
- * the runtime still has a single read. In the webhook phase the expression engine binds
- * `$json` to the whole request (`body`, `headers`, `query`, `params`), so this is ordinary
- * n8n expression resolution rather than a parser of its own.
+ * One expression over the whole request. In the webhook phase the expression engine binds
+ * `$json` to the request itself — `body`, `headers`, `query` and `params` — so where the
+ * identifier lives is said by the expression alone, with the editor's normal expression
+ * tooling and no parser of its own. The runtime reads this single parameter and nothing
+ * else, so there is no second field that could disagree with it.
  */
-const callbackIdentifierBase: Omit<INodeProperties, 'displayOptions'> = {
+export const callbackIdentifierProperty: INodeProperties = {
 	displayName: 'Callback Identifier',
 	name: 'callbackIdentifier',
 	type: 'string',
-	default: '',
+	default: '={{ $json.body.id }}',
 	required: true,
+	placeholder: 'e.g. {{ $json.headers["x-correlation-key"] }}',
+	hint: 'Resolved against each incoming callback, where $json is the whole request: $json.body, $json.headers, $json.query and $json.params. The editor preview has no request to show, so it renders no value here.',
 	description:
-		'Expression that reads the identifier out of the incoming callback. The current item here is the whole request, so its body, headers and query are all reachable — see this field default for the exact form. The resolved value is compared literally against the Wait Identifier.',
+		'Expression that reads the identifier out of the incoming callback. The current item here is the whole request, so its body, headers, query and path parameters are all reachable. The resolved value is compared literally against the Wait Identifier.',
 };
-
-export const callbackIdentifierProperties: INodeProperties[] = [
-	{
-		...callbackIdentifierBase,
-		default: '={{ $json.body.id }}',
-		displayOptions: { show: { callbackIdentifierSource: ['body'] } },
-	},
-	{
-		...callbackIdentifierBase,
-		default: '={{ $json.headers["x-request-id"] }}',
-		displayOptions: { show: { callbackIdentifierSource: ['headers'] } },
-	},
-	{
-		...callbackIdentifierBase,
-		default: '={{ $json.query.id }}',
-		displayOptions: { show: { callbackIdentifierSource: ['query'] } },
-	},
-] as INodeProperties[];
 
 /**
  * When the callback endpoint answers.

@@ -86,7 +86,6 @@ describe('ToolWaitForCallback', () => {
 				publishedKeys({
 					toolDescription: 'wait for a job',
 					waitIdentifier: "={{ $fromAI('waitIdentifier', 'The job id', 'string') }}",
-					callbackIdentifierSource: 'body',
 					callbackIdentifier: '={{ $json.body.id }}',
 					callbackAuthentication: 'none',
 				}),
@@ -100,7 +99,6 @@ describe('ToolWaitForCallback', () => {
 			expect(
 				publishedKeys({
 					waitIdentifier,
-					callbackIdentifierSource: 'body',
 					callbackIdentifier: '={{ $json.body.id }}',
 				}),
 			).toEqual([]);

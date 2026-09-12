@@ -45,7 +45,11 @@ const nodeTypes = mock<INodeTypes>({
  * Resolves the identifier the way the runtime does: a real workflow, a real webhook
  * context, and the request reaching the expression engine through `additionalData`.
  */
-async function resolve(callbackIdentifier: string, request: object): Promise<string | null> {
+async function resolve(
+	callbackIdentifier: string,
+	request: object,
+	otherParameters: INode['parameters'] = {},
+): Promise<string | null> {
 	const node: INode = {
 		id: 'node-1',
 		name: 'Wait for Callback',
@@ -53,7 +57,7 @@ async function resolve(callbackIdentifier: string, request: object): Promise<str
 		typeVersion: 1,
 		position: [0, 0],
 		webhookId: 'endpoint-a',
-		parameters: { callbackIdentifier },
+		parameters: { ...otherParameters, callbackIdentifier },
 	};
 
 	const workflow = new Workflow({
@@ -122,5 +126,32 @@ describe('CallbackIdentifierResolver', () => {
 
 	it('accepts a fixed identifier with no expression at all', async () => {
 		expect(await resolve('static-key', request)).toBe('static-key');
+	});
+
+	it('follows the path the expression names, however deep it goes', async () => {
+		const nested = { ...request, body: { data: { job: { requestId: 'req-9' } } } };
+
+		expect(await resolve('={{ $json.body.data.job.requestId }}', nested)).toBe('req-9');
+		expect(await resolve('={{ $json.body.data.job.missing }}', nested)).toBe(null);
+	});
+
+	it('reads a path parameter of the endpoint', async () => {
+		expect(
+			await resolve('={{ $json.params.orderId }}', { ...request, params: { orderId: 'o-1' } }),
+		).toBe('o-1');
+	});
+
+	it('returns nothing for an expression that does not evaluate', async () => {
+		expect(await resolve('={{ $json.body.id.toUpperCase( }}', request)).toBe(null);
+	});
+
+	it('is decided by the expression alone, whatever else the node was saved with', async () => {
+		// A workflow saved before the source selector was removed still carries it. The
+		// runtime never read it: the expression names the source.
+		expect(
+			await resolve('={{ $json.headers["x-request-id"] }}', request, {
+				callbackIdentifierSource: 'body',
+			}),
+		).toBe('125');
 	});
 });
