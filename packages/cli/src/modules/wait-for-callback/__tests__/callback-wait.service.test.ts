@@ -155,22 +155,53 @@ describe('CallbackWaitService', () => {
 			expect(outcome.kind).toBe('claimed');
 		});
 
-		it('ignores a delivery that lost the transition', async () => {
+		it('reports a delivery that lost the transition as a duplicate', async () => {
 			repository.findLive.mockResolvedValue(makeRow({ status: 'waiting' }));
 			repository.claimForResume.mockResolvedValue(false);
 
 			const outcome = await service.correlate(NAMESPACE, '125', { id: 125 });
 
-			expect(outcome.kind).toBe('ignored');
+			expect(outcome.kind).toBe('duplicate');
 		});
 
-		it('ignores a delivery while a resume is already in flight', async () => {
+		it('reports a delivery while a resume is already in flight as a duplicate', async () => {
 			repository.findLive.mockResolvedValue(makeRow({ status: 'resuming' }));
 
 			const outcome = await service.correlate(NAMESPACE, '125', { id: 125 });
 
-			expect(outcome.kind).toBe('ignored');
+			expect(outcome.kind).toBe('duplicate');
 			expect(repository.claimForResume).not.toHaveBeenCalled();
+		});
+
+		it('reports a second delivery landing on a parked callback as a duplicate', async () => {
+			repository.findLive.mockResolvedValue(makeRow({ status: 'pendingCallback' }));
+
+			const outcome = await service.correlate(NAMESPACE, '125', { id: 125 });
+
+			expect(outcome.kind).toBe('duplicate');
+			expect(repository.insertEarlyCallback).not.toHaveBeenCalled();
+		});
+
+		it('reports the loser of a race to park the same key as a duplicate', async () => {
+			repository.findLive.mockResolvedValue(null);
+			repository.findLatest.mockResolvedValueOnce(null);
+			repository.countEarlyCallbacks.mockResolvedValue(0);
+			// The unique index refused the second row. By then the winner's row exists.
+			repository.insertEarlyCallback.mockRejectedValue(new Error('UNIQUE constraint failed'));
+			repository.findLatest.mockResolvedValueOnce(makeRow({ status: 'pendingCallback' }));
+
+			const outcome = await service.correlate(NAMESPACE, '125', { id: 125 });
+
+			expect(outcome.kind).toBe('duplicate');
+		});
+
+		it('surfaces a park failure that left no row behind', async () => {
+			repository.findLive.mockResolvedValue(null);
+			repository.findLatest.mockResolvedValue(null);
+			repository.countEarlyCallbacks.mockResolvedValue(0);
+			repository.insertEarlyCallback.mockRejectedValue(new Error('disk full'));
+
+			await expect(service.correlate(NAMESPACE, '125', { id: 125 })).rejects.toThrow('disk full');
 		});
 
 		it('parks a callback that has no wait yet', async () => {
@@ -190,7 +221,7 @@ describe('CallbackWaitService', () => {
 
 			const outcome = await service.correlate(NAMESPACE, '125', { id: 125, ts: 'later' });
 
-			expect(outcome.kind).toBe('ignored');
+			expect(outcome.kind).toBe('duplicate');
 			expect(repository.insertEarlyCallback).not.toHaveBeenCalled();
 		});
 
@@ -211,7 +242,7 @@ describe('CallbackWaitService', () => {
 
 			const outcome = await service.correlate(NAMESPACE, '125', { id: 125 });
 
-			expect(outcome.kind).toBe('ignored');
+			expect(outcome).toEqual({ kind: 'dropped', reason: 'tooManyParked' });
 			expect(repository.insertEarlyCallback).not.toHaveBeenCalled();
 		});
 
@@ -222,7 +253,7 @@ describe('CallbackWaitService', () => {
 
 			const outcome = await service.correlate(NAMESPACE, '125', { blob: 'x'.repeat(70000) });
 
-			expect(outcome.kind).toBe('ignored');
+			expect(outcome).toEqual({ kind: 'dropped', reason: 'bodyTooLarge' });
 			expect(repository.insertEarlyCallback).not.toHaveBeenCalled();
 		});
 	});

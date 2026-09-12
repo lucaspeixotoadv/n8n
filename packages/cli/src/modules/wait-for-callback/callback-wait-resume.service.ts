@@ -68,14 +68,27 @@ export class CallbackWaitResumeService {
 
 		if (!this.injectCallbackResult(execution, wait, payload)) return 'abandoned';
 
-		await this.startResume(execution, executionId, wait.userId);
+		const started = await this.startResume(execution, executionId, wait.userId);
 
-		this.eventService.emit('execution-resumed', {
-			executionId,
-			workflowId: execution.workflowData.id,
-			resumeSource: 'webhook',
-			responseAt: new Date(),
-		});
+		// Past this point the continuation is running (here or in the process that won the
+		// execution). Nothing below may throw to the caller: it would read the throw as "the
+		// resume did not start" and hand the claim back, and a second delivery could then
+		// resume an execution that is already running.
+		if (started) {
+			try {
+				this.eventService.emit('execution-resumed', {
+					executionId,
+					workflowId: execution.workflowData.id,
+					resumeSource: 'webhook',
+					responseAt: new Date(),
+				});
+			} catch (error) {
+				this.logger.error('Failed to report a callback resume', {
+					executionId,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
 
 		return 'resumed';
 	}
@@ -117,6 +130,18 @@ export class CallbackWaitResumeService {
 			return false;
 		}
 
+		// The same node can park the execution again later, for another tool call. The engine
+		// stamps the call's id onto the input it parks with, so the callback is bound to the
+		// exact call that registered it, not just to the node.
+		const parkedToolCallId = stackEntry.data.main?.[0]?.[0]?.json?.toolCallId;
+		if (wait.toolCallId !== null && parkedToolCallId !== wait.toolCallId) {
+			this.logger.debug('Callback does not match the tool call the execution is parked on', {
+				executionId: wait.executionId,
+				toolCallId: wait.toolCallId,
+			});
+			return false;
+		}
+
 		stackEntry.node.disabled = true;
 		execution.data.waitTill = undefined;
 
@@ -139,12 +164,16 @@ export class CallbackWaitResumeService {
 	 *
 	 * The user is the one the run parked as, so the resumed segment is pushed to the UI the
 	 * same way: the push hooks fail closed without a user and send no node data at all.
+	 *
+	 * Returns whether this call is the one that started the continuation. The runner claims
+	 * the execution row with a compare-and-set on its status, so of two holders of the same
+	 * claim — a delivery and a leader re-driving it — exactly one starts it.
 	 */
 	private async startResume(
 		execution: IExecutionResponse,
 		executionId: string,
 		userId: string | null,
-	): Promise<void> {
+	): Promise<boolean> {
 		const workflowId = execution.workflowData.id;
 		const project = await this.ownershipService.getWorkflowProjectCached(workflowId);
 
@@ -165,8 +194,10 @@ export class CallbackWaitResumeService {
 		} catch (error) {
 			// Another process claimed the same execution first. Its resume carries the same
 			// callback body, so there is nothing left to do here.
-			if (error instanceof ExecutionAlreadyResumingError) return;
+			if (error instanceof ExecutionAlreadyResumingError) return false;
 			throw error;
 		}
+
+		return true;
 	}
 }

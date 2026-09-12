@@ -14,14 +14,23 @@ import { CallbackWaitConfig } from './callback-wait.config';
 import type { CallbackWait } from './callback-wait.entity';
 import { CallbackWaitRepository } from './callback-wait.repository';
 
+/** Why an early callback was not parked. */
+export type CallbackDropReason = 'tooManyParked' | 'bodyTooLarge';
+
 /** What a delivered callback resolved to, from the correlator's point of view. */
 export type CallbackCorrelationOutcome =
 	/** The delivery won the race for a parked wait and now owns its resume. */
 	| { kind: 'claimed'; wait: CallbackWait; payload: IDataObject }
 	/** Nothing was waiting, so the body is parked until a wait registers for the key. */
 	| { kind: 'parked' }
-	/** Already resolved, already resuming, or unmatched. Never says which. */
-	| { kind: 'ignored' };
+	/**
+	 * The key was consumed before this delivery: by a concurrent delivery that won the
+	 * claim, by a resume already in flight, by a resolved wait, or by a parked body.
+	 * The winner's payload is untouched.
+	 */
+	| { kind: 'duplicate' }
+	/** Nothing was waiting and the body could not be parked either. */
+	| { kind: 'dropped'; reason: CallbackDropReason };
 
 /**
  * Owns the correlation between external callbacks and parked tool calls.
@@ -97,29 +106,42 @@ export class CallbackWaitService implements CallbackWaitProvider {
 		correlationValue: string,
 		payload: IDataObject,
 	): Promise<CallbackCorrelationOutcome> {
-		return await this.transactionRunner.run({}, async (ctx) => {
-			const live = await this.repository.findLive(ctx, namespace, correlationValue);
+		try {
+			return await this.transactionRunner.run({}, async (ctx) => {
+				const live = await this.repository.findLive(ctx, namespace, correlationValue);
 
-			if (live?.status === 'waiting') {
-				const record = { payload, payloadReceivedAt: new Date() };
-				const claimed = await this.repository.claimForResume(ctx, live.id, record);
-				// Lost the transition to a concurrent delivery of the same event.
-				if (!claimed) return { kind: 'ignored' };
+				if (live?.status === 'waiting') {
+					const record = { payload, payloadReceivedAt: new Date() };
+					// The one write that decides the race: a conditional update on the row's
+					// status. The database serialises it, so of any number of concurrent
+					// deliveries exactly one sees its row matched — and only that one's payload
+					// is written. Reading `waiting` a moment ago proves nothing.
+					const claimed = await this.repository.claimForResume(ctx, live.id, record);
+					if (!claimed) return { kind: 'duplicate' };
 
-				return { kind: 'claimed', wait: Object.assign(live, record), payload };
-			}
+					return { kind: 'claimed', wait: Object.assign(live, record), payload };
+				}
 
-			// Already resuming, or a second delivery landing on a parked callback.
-			if (live) return { kind: 'ignored' };
+				// Already resuming, or a second delivery landing on a parked callback.
+				if (live) return { kind: 'duplicate' };
 
-			// No live row. A resolved row for the same key means this is a late duplicate,
-			// which must not be re-parked: a future wait for the key would otherwise wake with
-			// the residue of a correlation that is already finished.
-			const latest = await this.repository.findLatest(ctx, namespace, correlationValue);
-			if (latest) return { kind: 'ignored' };
+				// No live row. A resolved row for the same key means this is a late duplicate,
+				// which must not be re-parked: a future wait for the key would otherwise wake with
+				// the residue of a correlation that is already finished.
+				const latest = await this.repository.findLatest(ctx, namespace, correlationValue);
+				if (latest) return { kind: 'duplicate' };
 
-			return await this.park(ctx, namespace, correlationValue, payload);
-		});
+				return await this.park(ctx, namespace, correlationValue, payload);
+			});
+		} catch (error) {
+			// Two first deliveries of one event can both find nothing and both try to park.
+			// The unique index lets only one row in; the other insert fails. That failure is
+			// a duplicate, not a fault, but only if a row for the key does exist now.
+			const latest = await this.repository.findLatest({}, namespace, correlationValue);
+			if (latest) return { kind: 'duplicate' };
+
+			throw error;
+		}
 	}
 
 	/** Confirms a claimed delivery as delivered, releasing the correlation key. */
@@ -172,14 +194,14 @@ export class CallbackWaitService implements CallbackWaitProvider {
 				namespace,
 				parked,
 			});
-			return { kind: 'ignored' };
+			return { kind: 'dropped', reason: 'tooManyParked' };
 		}
 
 		if (!this.isWithinSizeLimit(payload)) {
 			this.logger.warn('Dropping an early callback: the body exceeds the stored size limit', {
 				namespace,
 			});
-			return { kind: 'ignored' };
+			return { kind: 'dropped', reason: 'bodyTooLarge' };
 		}
 
 		await this.repository.insertEarlyCallback(ctx, namespace, correlationValue, {

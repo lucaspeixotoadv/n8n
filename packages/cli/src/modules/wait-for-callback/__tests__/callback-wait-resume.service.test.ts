@@ -44,9 +44,10 @@ function makeExecution(
 	status: ExecutionStatus,
 	{
 		nodeId = NODE_ID,
+		toolCallId = 'call-1',
 		finished = false,
 		error,
-	}: { nodeId?: string; finished?: boolean; error?: unknown } = {},
+	}: { nodeId?: string; toolCallId?: string; finished?: boolean; error?: unknown } = {},
 ): IExecutionResponse {
 	const data = {
 		// Still set from when the tool parked: the engine treats a resumed execution that
@@ -63,7 +64,12 @@ function makeExecution(
 		},
 		executionData: {
 			nodeExecutionStack: [
-				{ node: { id: nodeId, name: NODE_NAME }, data: { main: [[]] }, source: null },
+				{
+					node: { id: nodeId, name: NODE_NAME },
+					// The engine stamps the tool call's id onto the input the tool parked with.
+					data: { main: [[{ json: { waitIdentifier: '125', toolCallId } }]] },
+					source: null,
+				},
 			],
 		},
 	} as unknown as IRunExecutionData;
@@ -243,10 +249,60 @@ describe('CallbackWaitResumeService', () => {
 		expect(workflowRunner.run).not.toHaveBeenCalled();
 	});
 
-	it('treats a resume another process already claimed as done', async () => {
+	it('treats a resume another process already claimed as done, without reporting it twice', async () => {
 		executionPersistence.findSingleExecution.mockResolvedValue(makeExecution('waiting'));
 		workflowRunner.run.mockRejectedValue(new ExecutionAlreadyResumingError('exec-1'));
 
 		expect(await service.resume(makeWait(), { id: 125 })).toBe('resumed');
+		expect(eventService.emit).not.toHaveBeenCalled();
+	});
+
+	it('abandons a callback when the execution parked on the same node for another tool call', async () => {
+		executionPersistence.findSingleExecution.mockResolvedValue(
+			makeExecution('waiting', { toolCallId: 'call-2' }),
+		);
+
+		const outcome = await service.resume(makeWait({ toolCallId: 'call-1' }), { id: 125 });
+
+		expect(outcome).toBe('abandoned');
+		expect(workflowRunner.run).not.toHaveBeenCalled();
+	});
+
+	it('does not bind a wait registered without a tool call id to one', async () => {
+		executionPersistence.findSingleExecution.mockResolvedValue(
+			makeExecution('waiting', { toolCallId: 'call-2' }),
+		);
+
+		expect(await service.resume(makeWait({ toolCallId: null }), { id: 125 })).toBe('resumed');
+	});
+
+	it('keeps the resume committed when reporting it fails', async () => {
+		executionPersistence.findSingleExecution.mockResolvedValue(makeExecution('waiting'));
+		eventService.emit.mockImplementation(() => {
+			throw new Error('relay down');
+		});
+
+		// A throw here would read as "the resume did not start" and hand the claim back.
+		expect(await service.resume(makeWait(), { id: 125 })).toBe('resumed');
+		expect(workflowRunner.run).toHaveBeenCalledTimes(1);
+	});
+
+	it('starts exactly one continuation when two holders of the claim race for the execution', async () => {
+		// Each holder reads its own copy of the parked execution, as two processes would.
+		executionPersistence.findSingleExecution.mockImplementation(
+			async () => makeExecution('waiting') as never,
+		);
+		// The runner's compare-and-set on the execution row: the second caller loses it.
+		workflowRunner.run
+			.mockResolvedValueOnce('exec-1')
+			.mockRejectedValueOnce(new ExecutionAlreadyResumingError('exec-1'));
+
+		const outcomes = await Promise.all([
+			service.resume(makeWait(), { id: 125 }),
+			service.resume(makeWait(), { id: 125 }),
+		]);
+
+		expect(outcomes).toEqual(['resumed', 'resumed']);
+		expect(eventService.emit).toHaveBeenCalledTimes(1);
 	});
 });

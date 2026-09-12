@@ -15,6 +15,10 @@ import type { CallbackIdentifierResolver } from '../callback-identifier-resolver
 import type { CallbackWaitResumeService } from '../callback-wait-resume.service';
 import type { CallbackWaitService } from '../callback-wait.service';
 import { ToolCallbackWebhooks } from '../tool-callback-webhooks';
+import { BadRequestError } from '@/errors/response-errors/bad-request.error';
+import { ContentTooLargeError } from '@/errors/response-errors/content-too-large.error';
+import { GoneError } from '@/errors/response-errors/gone.error';
+import { TooManyRequestsError } from '@/errors/response-errors/too-many-requests.error';
 import { rawBodyReader } from '@/middlewares';
 import { isWebhookStaticResponse } from '@/webhooks/webhook-response';
 import type { WebhookService } from '@/webhooks/webhook.service';
@@ -136,7 +140,7 @@ describe('ToolCallbackWebhooks', () => {
 			resumeService,
 			identifierResolver,
 		);
-		callbackWaitService.correlate.mockResolvedValue({ kind: 'ignored' });
+		callbackWaitService.correlate.mockResolvedValue({ kind: 'parked' });
 	});
 
 	it.each([
@@ -214,23 +218,26 @@ describe('ToolCallbackWebhooks', () => {
 		expect(payload).not.toHaveProperty('query');
 	});
 
-	it('answers the same way for a request with no usable identifier', async () => {
-		const response = await handler.handle(buildRequest({ body: { unrelated: true } }));
+	it('rejects a request with no usable identifier', async () => {
+		const request = buildRequest({ body: { unrelated: true } });
 
+		await expect(handler.handle(request)).rejects.toThrow(BadRequestError);
 		expect(callbackWaitService.correlate).not.toHaveBeenCalled();
-		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
 	});
 
-	it('answers the same way for a duplicate delivery', async () => {
-		callbackWaitService.correlate.mockResolvedValue({ kind: 'ignored' });
+	it('answers a duplicate delivery with a conflict, without resuming anything', async () => {
+		callbackWaitService.correlate.mockResolvedValue({ kind: 'duplicate' });
 
-		const response = await handler.handle(buildRequest({ body: { id: 125 } }));
-
+		await expect(handler.handle(buildRequest({ body: { id: 125 } }))).rejects.toMatchObject({
+			httpStatusCode: 409,
+			message: 'The callback with identifier "125" was already received',
+		});
 		expect(resumeService.resume).not.toHaveBeenCalled();
-		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
+		expect(callbackWaitService.markResolved).not.toHaveBeenCalled();
+		expect(callbackWaitService.releaseClaim).not.toHaveBeenCalled();
 	});
 
-	it('answers the same way for a callback that woke an execution', async () => {
+	it('answers the callback that woke an execution with the node response', async () => {
 		callbackWaitService.correlate.mockResolvedValue({
 			kind: 'claimed',
 			wait: mock<CallbackWait>({ id: 'row-1' }),
@@ -241,6 +248,31 @@ describe('ToolCallbackWebhooks', () => {
 		const response = await handler.handle(buildRequest({ body: { id: 125 } }));
 
 		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
+	});
+
+	it('answers a callback parked for a wait still to register with the node response', async () => {
+		callbackWaitService.correlate.mockResolvedValue({ kind: 'parked' });
+
+		const response = await handler.handle(buildRequest({ body: { id: 125 } }));
+
+		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
+		expect(resumeService.resume).not.toHaveBeenCalled();
+	});
+
+	it('answers a callback that could not be parked because the endpoint holds too many', async () => {
+		callbackWaitService.correlate.mockResolvedValue({ kind: 'dropped', reason: 'tooManyParked' });
+
+		await expect(handler.handle(buildRequest({ body: { id: 125 } }))).rejects.toThrow(
+			TooManyRequestsError,
+		);
+	});
+
+	it('answers a callback that could not be parked because its body is too large', async () => {
+		callbackWaitService.correlate.mockResolvedValue({ kind: 'dropped', reason: 'bodyTooLarge' });
+
+		await expect(handler.handle(buildRequest({ body: { id: 125 } }))).rejects.toThrow(
+			ContentTooLargeError,
+		);
 	});
 
 	it('resolves nothing when the node declined the callback', async () => {
@@ -254,7 +286,7 @@ describe('ToolCallbackWebhooks', () => {
 		expect(bodyOf(response)).toEqual({ message: 'Callback received' });
 	});
 
-	it('resolves a callback whose execution is gone, so the key is released', async () => {
+	it('consumes a callback whose execution is gone and says so', async () => {
 		callbackWaitService.correlate.mockResolvedValue({
 			kind: 'claimed',
 			wait: mock<CallbackWait>({ id: 'row-1' }),
@@ -262,8 +294,7 @@ describe('ToolCallbackWebhooks', () => {
 		});
 		resumeService.resume.mockResolvedValue('abandoned');
 
-		await handler.handle(buildRequest({ body: { id: 125 } }));
-
+		await expect(handler.handle(buildRequest({ body: { id: 125 } }))).rejects.toThrow(GoneError);
 		expect(callbackWaitService.markResolved).toHaveBeenCalledWith('row-1');
 		expect(callbackWaitService.releaseClaim).not.toHaveBeenCalled();
 	});
