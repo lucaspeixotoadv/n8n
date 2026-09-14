@@ -470,6 +470,58 @@ describe('Push', () => {
 		});
 	});
 
+	describe('hasRecipients', () => {
+		const executionId = 'execution-id';
+		const publisher = mock<Publisher>();
+
+		let subscriptions: ExecutionSubscriptionRegistry;
+
+		const buildPush = (settings: Partial<InstanceSettings>) => {
+			config.backend = 'websocket';
+			subscriptions = new ExecutionSubscriptionRegistry();
+			push = new Push(
+				config,
+				mock<InstanceSettings>({ isWorker: false, isMultiMain: false, ...settings }),
+				logger,
+				mock(),
+				publisher,
+				subscriptions,
+			);
+		};
+
+		test('is false when nobody watches and no originating session is held', () => {
+			buildPush({});
+			wsBackend.hasPushRef.mockReturnValue(false);
+
+			expect(push.hasRecipients(executionId, 'origin-ref')).toBe(false);
+			expect(push.hasRecipients(executionId)).toBe(false);
+		});
+
+		test('is true when a session watches the execution', () => {
+			buildPush({});
+			subscriptions.subscribe(executionId, 'watcher');
+
+			expect(push.hasRecipients(executionId)).toBe(true);
+		});
+
+		test('is true when the originating session is held here', () => {
+			buildPush({});
+			wsBackend.hasPushRef.mockReturnValue(true);
+
+			expect(push.hasRecipients(executionId, 'origin-ref')).toBe(true);
+		});
+
+		test.each([
+			['a worker', { isWorker: true }],
+			['a multi-main instance', { isMultiMain: true }],
+		])('is true on %s, which cannot know who watches elsewhere', (_label, settings) => {
+			buildPush(settings);
+			wsBackend.hasPushRef.mockReturnValue(false);
+
+			expect(push.hasRecipients(executionId)).toBe(true);
+		});
+	});
+
 	describe('handleRelayExecutionLifecycleEvent', () => {
 		const executionId = 'execution-id';
 		const instanceSettings = mock<InstanceSettings>({ isWorker: false, isMultiMain: true });

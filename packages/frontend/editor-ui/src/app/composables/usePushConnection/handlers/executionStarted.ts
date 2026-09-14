@@ -3,8 +3,8 @@ import { useWorkflowDocumentStore } from '@/app/stores/workflowDocument.store';
 import { useWorkflowExecutionStateStore } from '@/app/stores/workflowExecutionState.store';
 import { createExecutionDataId, useExecutionDataStore } from '@/app/stores/executionData.store';
 import { parse } from 'flatted';
-import { createRunExecutionData } from 'n8n-workflow';
-import type { IRunExecutionData } from 'n8n-workflow';
+import { createRunExecutionData, isTerminalExecutionStatus } from 'n8n-workflow';
+import type { IRunData, IRunExecutionData } from 'n8n-workflow';
 import { resolveExecutionDocuments } from './executionDocuments';
 import type { PushHandlerOptions } from './types';
 
@@ -13,15 +13,24 @@ import type { PushHandlerOptions } from './types';
  */
 export async function executionStarted({ data }: ExecutionStarted, options: PushHandlerOptions) {
 	const { documentId } = options;
-	// A run that parked and is now resuming starts again. A document merely watching it
-	// learned it was waiting from `executionWaiting`, and this is the one event that says
-	// it is running again; its node events keep updating the data it already shows.
+	// For a document merely watching the execution this is the one event that says the run
+	// is going: a queued execution that got its turn, or a parked one that resumed. A resume
+	// carries the run data so far, which the document may already hold in part, so it is
+	// merged rather than replaced. The node events that follow keep updating it.
 	const { watcherDocumentIds } = resolveExecutionDocuments(data.executionId, options);
 	if (watcherDocumentIds.length > 0) {
 		const watchedStore = useExecutionDataStore(createExecutionDataId(data.executionId));
 		const watched = watchedStore.getExecutionSnapshot();
-		if (watched !== null && watched.status === 'waiting') {
-			watchedStore.setExecution({ ...watched, status: 'running' });
+		if (watched !== null && !isTerminalExecutionStatus(watched.status)) {
+			if (watched.status !== 'running') {
+				watchedStore.setExecution(
+					{ ...watched, status: 'running', startedAt: new Date(data.startedAt) },
+					{ stripWaitingTaskData: false },
+				);
+			}
+			if (data.flattedRunData) {
+				watchedStore.mergeExecutionRunData(parse(data.flattedRunData) as IRunData);
+			}
 		}
 	}
 

@@ -1,115 +1,218 @@
 import { createPinia, setActivePinia } from 'pinia';
-import type { Mock } from 'vitest';
 import { nextTick, ref } from 'vue';
 
 import { createWorkflowDocumentId } from '@/app/stores/workflowDocument.store';
 import { usePushConnectionStore } from '@/app/stores/pushConnection.store';
 import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
 
+const { watchExecution, unwatchExecution } = vi.hoisted(() => ({
+	watchExecution: vi.fn<(context: unknown, executionId: string) => Promise<void>>(),
+	unwatchExecution: vi.fn<(context: unknown, executionId: string) => Promise<void>>(),
+}));
+
+vi.mock('@/features/execution/executions/executionWatch.api', () => ({
+	watchExecution,
+	unwatchExecution,
+}));
+
 describe('executionWatch.store', () => {
 	const documentA = createWorkflowDocumentId('wf-a');
 	const documentB = createWorkflowDocumentId('wf-b');
 
 	let store: ReturnType<typeof useExecutionWatchStore>;
-	let send: Mock<(message: unknown) => void>;
+	const isConnected = ref(true);
+
+	/** What reached the server, in order. */
+	const requests = () => [
+		...watchExecution.mock.calls.map(([, id]) => `watch ${id}`),
+		...unwatchExecution.mock.calls.map(([, id]) => `unwatch ${id}`),
+	];
+
+	/** Lets the chained requests reach the mocked server. */
+	const settle = async () => await new Promise((resolve) => setTimeout(resolve, 0));
 
 	beforeEach(() => {
+		vi.clearAllMocks();
+		watchExecution.mockResolvedValue();
+		unwatchExecution.mockResolvedValue();
+		isConnected.value = true;
 		setActivePinia(createPinia());
+		vi.spyOn(usePushConnectionStore(), 'isConnected', 'get').mockImplementation(
+			() => isConnected.value,
+		);
 		store = useExecutionWatchStore();
-		send = vi.fn<(message: unknown) => void>();
-		vi.spyOn(usePushConnectionStore(), 'send').mockImplementation(send);
 	});
 
-	it('asks the server for an execution the first time a document watches it', () => {
-		store.watchExecution('exec-1', documentA);
+	it('asks the server for the execution a document starts observing', async () => {
+		store.observe(documentA, 'exec-1');
 
-		expect(send).toHaveBeenCalledExactlyOnceWith({
-			type: 'subscribeToExecution',
-			executionId: 'exec-1',
-		});
 		expect(store.documentsWatching('exec-1')).toEqual([documentA]);
+		expect(store.observedExecution(documentA)).toBe('exec-1');
+		await settle();
+		expect(watchExecution).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'exec-1');
 	});
 
-	it('does not ask twice for an execution two documents watch', () => {
-		store.watchExecution('exec-1', documentA);
-		store.watchExecution('exec-1', documentB);
+	it('asks again for a second document, so each observation starts with a snapshot', async () => {
+		store.observe(documentA, 'exec-1');
+		store.observe(documentB, 'exec-1');
 
-		expect(send).toHaveBeenCalledOnce();
+		await settle();
+		expect(watchExecution).toHaveBeenCalledTimes(2);
 		expect(store.documentsWatching('exec-1')).toEqual([documentA, documentB]);
 	});
 
-	it('keeps the subscription while another document still watches', () => {
-		store.watchExecution('exec-1', documentA);
-		store.watchExecution('exec-1', documentB);
-		send.mockClear();
+	it('does nothing when a document observes what it already observes', async () => {
+		store.observe(documentA, 'exec-1');
+		store.observe(documentA, 'exec-1');
 
-		store.unwatchExecution('exec-1', documentA);
+		await settle();
+		expect(watchExecution).toHaveBeenCalledOnce();
+	});
 
-		expect(send).not.toHaveBeenCalled();
+	it('replaces the execution a document observes in one step', async () => {
+		store.observe(documentA, 'exec-1');
+		store.observe(documentA, 'exec-2');
+
+		// The registry answers for the new execution and no longer for the old one, before
+		// any request has resolved.
+		expect(store.documentsWatching('exec-1')).toEqual([]);
+		expect(store.documentsWatching('exec-2')).toEqual([documentA]);
+		expect(store.observedExecution(documentA)).toBe('exec-2');
+		await settle();
+		expect(unwatchExecution).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'exec-1');
+		expect(watchExecution).toHaveBeenLastCalledWith(expect.anything(), 'exec-2');
+	});
+
+	it('keeps the subscription while another document still observes', async () => {
+		store.observe(documentA, 'exec-1');
+		store.observe(documentB, 'exec-1');
+
+		store.observe(documentA, null);
+
+		await settle();
+		expect(unwatchExecution).not.toHaveBeenCalled();
 		expect(store.documentsWatching('exec-1')).toEqual([documentB]);
 	});
 
-	it('releases the subscription when the last document stops watching', () => {
-		store.watchExecution('exec-1', documentA);
-		send.mockClear();
+	it('releases the subscription when the last document stops observing', async () => {
+		store.observe(documentA, 'exec-1');
 
-		store.unwatchExecution('exec-1', documentA);
+		store.observe(documentA, null);
 
-		expect(send).toHaveBeenCalledExactlyOnceWith({
-			type: 'unsubscribeFromExecution',
-			executionId: 'exec-1',
-		});
+		await settle();
+		expect(unwatchExecution).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'exec-1');
+		expect(store.documentsWatching('exec-1')).toEqual([]);
+		expect(store.observedExecution(documentA)).toBeUndefined();
+	});
+
+	it('ignores a document that stops observing nothing', async () => {
+		store.observe(documentA, null);
+
+		await settle();
+		expect(unwatchExecution).not.toHaveBeenCalled();
+	});
+
+	it('reports no documents for an execution nothing observes', () => {
 		expect(store.documentsWatching('exec-1')).toEqual([]);
 	});
 
-	it('ignores an unwatch for an execution nothing watches', () => {
-		store.unwatchExecution('exec-1', documentA);
-
-		expect(send).not.toHaveBeenCalled();
-	});
-
-	it('reports no documents for an execution nothing watches', () => {
-		expect(store.documentsWatching('exec-1')).toEqual([]);
-	});
-
-	it('renews every subscription when the connection comes back', async () => {
-		// The server forgets a session's subscriptions with its connection, and every renewed
-		// one starts with a fresh snapshot: that is how a document catches up.
-		const isConnected = ref(true);
-		vi.spyOn(usePushConnectionStore(), 'isConnected', 'get').mockImplementation(
-			() => isConnected.value,
+	it('sends the requests for one execution in the order they were decided', async () => {
+		// The first request is slow; the ones decided after it must still reach the server
+		// after it, or the server ends up with the opposite of what the session decided.
+		let finishFirst: () => void = () => {};
+		watchExecution.mockImplementationOnce(
+			async () => await new Promise<void>((resolve) => (finishFirst = resolve)),
 		);
-		store.watchExecution('exec-1', documentA);
-		store.watchExecution('exec-2', documentB);
-		send.mockClear();
+		const order: string[] = [];
+		unwatchExecution.mockImplementation(async (_, id) => {
+			order.push(`unwatch ${id}`);
+		});
+		watchExecution.mockImplementation(async (_, id) => {
+			order.push(`watch ${id}`);
+		});
 
-		isConnected.value = false;
+		store.observe(documentA, 'exec-1');
+		store.observe(documentA, null);
+		store.observe(documentA, 'exec-1');
 		await nextTick();
-		expect(send).not.toHaveBeenCalled();
+		expect(order).toEqual([]);
+
+		finishFirst();
+		await vi.waitFor(() => expect(order).toEqual(['unwatch exec-1', 'watch exec-1']));
+	});
+
+	it('waits for the connection before asking, and asks for everything once it is up', async () => {
+		isConnected.value = false;
+		store.observe(documentA, 'exec-1');
+		store.observe(documentB, 'exec-2');
+		await settle();
+		expect(watchExecution).not.toHaveBeenCalled();
 
 		isConnected.value = true;
 		await nextTick();
 
-		expect(send.mock.calls.map(([message]) => message)).toEqual([
-			{ type: 'subscribeToExecution', executionId: 'exec-1' },
-			{ type: 'subscribeToExecution', executionId: 'exec-2' },
-		]);
+		await vi.waitFor(() => expect(requests()).toEqual(['watch exec-1', 'watch exec-2']));
+	});
+
+	it('renews every subscription when the connection comes back, once each', async () => {
+		// The server forgets a session's subscriptions with its connection, and every renewed
+		// one starts with a fresh snapshot: that is how a document catches up.
+		store.observe(documentA, 'exec-1');
+		store.observe(documentB, 'exec-2');
+		await settle();
+		vi.clearAllMocks();
+
+		isConnected.value = false;
+		await nextTick();
+		expect(watchExecution).not.toHaveBeenCalled();
+
+		isConnected.value = true;
+		await nextTick();
+
+		await vi.waitFor(() => expect(requests()).toEqual(['watch exec-1', 'watch exec-2']));
 	});
 
 	it('does not renew a subscription a document released before the reconnect', async () => {
-		const isConnected = ref(true);
-		vi.spyOn(usePushConnectionStore(), 'isConnected', 'get').mockImplementation(
-			() => isConnected.value,
-		);
-		store.watchExecution('exec-1', documentA);
-		store.unwatchExecution('exec-1', documentA);
-		send.mockClear();
+		store.observe(documentA, 'exec-1');
+		store.observe(documentA, null);
+		await settle();
+		vi.clearAllMocks();
 
 		isConnected.value = false;
 		await nextTick();
 		isConnected.value = true;
 		await nextTick();
 
-		expect(send).not.toHaveBeenCalled();
+		await settle();
+		expect(watchExecution).not.toHaveBeenCalled();
+	});
+
+	it('does not release on the server what the lost connection already released', async () => {
+		store.observe(documentA, 'exec-1');
+		await settle();
+		isConnected.value = false;
+		await nextTick();
+
+		store.observe(documentA, null);
+
+		await settle();
+		expect(unwatchExecution).not.toHaveBeenCalled();
+	});
+
+	it('keeps observing when a request fails, so the next reconnect asks again', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		watchExecution.mockRejectedValueOnce(new Error('network'));
+
+		store.observe(documentA, 'exec-1');
+		await settle();
+
+		expect(store.documentsWatching('exec-1')).toEqual([documentA]);
+
+		isConnected.value = false;
+		await nextTick();
+		isConnected.value = true;
+		await nextTick();
+
+		await vi.waitFor(() => expect(watchExecution).toHaveBeenCalledTimes(2));
 	});
 });

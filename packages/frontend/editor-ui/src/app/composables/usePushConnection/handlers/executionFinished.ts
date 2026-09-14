@@ -37,7 +37,6 @@ import {
 import { getTriggerNodeServiceName } from '@/app/utils/nodeTypesUtils';
 import type { ExecutionFinished } from '@n8n/api-types/push/execution';
 import { resolveExecutionDocuments } from './executionDocuments';
-import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
 import { useI18n } from '@n8n/i18n';
 import type {
 	ExecutionStatus,
@@ -216,11 +215,13 @@ export async function executionFinished({ data }: ExecutionFinished, options: Pu
  *
  * A watched run is followed node by node, but the finish carries no data, and the last
  * events of a run can be trimmed, so the stored execution is the authority on how it
- * ended.
+ * ended. It is read once and lands in the execution's own data store, which every document
+ * showing it renders from.
  *
- * A finished execution emits nothing more, so the documents stop watching it here: the
- * subscription is released the moment it stops serving a purpose, not when the document
- * happens to go away.
+ * Nothing here decides what a document shows. A document that has moved on to another
+ * execution by the time the read returns is left alone: its data store gets the final
+ * state for whenever the execution is shown again, and the subscription ends because the
+ * execution reached a terminal state, not because this handler ran.
  */
 export async function refreshWatchingDocuments(
 	executionId: string,
@@ -230,29 +231,38 @@ export async function refreshWatchingDocuments(
 		return;
 	}
 
-	const executionWatchStore = useExecutionWatchStore();
+	const execution = await fetchStoredExecution(executionId);
+	if (!execution) return;
+
+	const executionDataStore = useExecutionDataStore(createExecutionDataId(executionId));
+	const snapshot = executionDataStore.getExecutionSnapshot();
+	if (snapshot === null) return;
+
+	executionDataStore.setExecution({
+		...snapshot,
+		id: executionId,
+		status: execution.status,
+		stoppedAt: execution.stoppedAt ?? new Date(),
+	});
+	executionDataStore.setExecutionRunData(getRunExecutionData(execution));
 
 	for (const documentId of documentIds) {
 		const stateStore = useWorkflowExecutionStateStore(documentId);
-		stateStore.executingNode.clearNodeExecutionQueue();
-		executionWatchStore.unwatchExecution(executionId, documentId);
+		if (stateStore.getResolvedActiveExecutionId() === executionId) {
+			stateStore.executingNode.clearNodeExecutionQueue();
+		}
+	}
+}
 
-		const execution = await fetchExecutionData(executionId, documentId);
-		if (!execution) continue;
-
-		const executionDataStore = useExecutionDataStore(createExecutionDataId(execution.id));
-		const snapshot = executionDataStore.getExecutionSnapshot();
-		if (snapshot === null) continue;
-
-		executionDataStore.setExecution({
-			...snapshot,
-			id: execution.id,
-			status: execution.status,
-			stoppedAt: execution.stoppedAt,
-		});
-		executionDataStore.setExecutionRunData(getRunExecutionData(execution));
-
-		stateStore.setDisplayedExecutionId(execution.id);
+/** The execution as stored, for a document that only displays it. */
+async function fetchStoredExecution(
+	executionId: string,
+): Promise<Pick<IExecutionResponse, 'status' | 'stoppedAt' | 'data'> | undefined> {
+	try {
+		const execution = await useWorkflowsStore().fetchExecutionDataById(executionId);
+		return execution?.data ? execution : undefined;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -352,7 +362,9 @@ export async function fetchExecutionData(
 /**
  * Returns the run execution data from the execution object in a normalized format
  */
-export function getRunExecutionData(execution: SimplifiedExecution): IRunExecutionData {
+export function getRunExecutionData(
+	execution: Pick<SimplifiedExecution, 'data'>,
+): IRunExecutionData {
 	return createRunExecutionData({
 		...execution.data,
 		startData: execution.data?.startData,

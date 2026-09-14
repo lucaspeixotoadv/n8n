@@ -47,6 +47,16 @@ export type ExecutionSnapshot = {
 		 * has and the terminal fetch completes it.
 		 */
 		flattedRunData?: string;
+		/**
+		 * The node runs that have started and not finished, in the order they started. Each
+		 * carries the `sequenceNumber` its own `nodeExecuteBefore` carried, so the session
+		 * can place the events that follow the snapshot relative to it.
+		 */
+		executingNodes?: Array<{
+			nodeName: string;
+			sequenceNumber: number;
+			data: ITaskStartedData;
+		}>;
 	};
 };
 
@@ -105,17 +115,13 @@ export type NodeExecuteBefore = {
 		executionId: string;
 		nodeName: string;
 		/**
-		 * Monotonic counter over this execution *segment*'s `nodeExecuteBefore` and
-		 * `nodeExecuteAfter` events, assigned in engine order by the instance
-		 * running the workflow. Lets the UI order node events that arrive late or
-		 * out of order (e.g. after a suspended background tab resumes) and render
-		 * only the latest node as executing.
-		 *
-		 * Scoped to a segment, not the whole execution: the counter restarts at 0
-		 * for each run, including when a waiting execution (Wait/Form node) resumes
-		 * — resuming rebuilds the push hooks with a fresh counter. Only compare
-		 * sequence numbers within a segment; ordering does not carry across a resume
-		 * boundary. Unique per event within a segment; starts at 0.
+		 * Where this event sits in the execution's node-event order. Derived from the
+		 * `executionIndex` the engine gave the task, so the start of a task comes before its
+		 * end and every task after it carries a higher number, across a resume too. The UI
+		 * uses it to drop a node event that arrives late or out of order (e.g. after a
+		 * suspended background tab resumes) and to render only the latest node as executing.
+		 * The same number is carried by an `executionSnapshot` for a node still running, so
+		 * events that follow a snapshot can be placed relative to it.
 		 */
 		sequenceNumber: number;
 		data: ITaskStartedData;
@@ -131,7 +137,7 @@ export type NodeExecuteAfter = {
 	data: {
 		executionId: string;
 		nodeName: string;
-		/** Per-segment monotonic counter — see {@link NodeExecuteBefore}. */
+		/** Position in the node-event order — see {@link NodeExecuteBefore}. */
 		sequenceNumber: number;
 		/**
 		 * The data field for task data in `NodeExecuteAfter` is always trimmed (undefined).

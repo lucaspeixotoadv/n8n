@@ -42,6 +42,7 @@ import { WorkflowStaticDataService } from '@/workflows/workflow-static-data.serv
 import { executeErrorWorkflow } from './execute-error-workflow';
 import { restoreBinaryDataId } from './restore-binary-data-id';
 import { ExecutionJournalService } from './execution-journal.service';
+import { nodeEventSequence } from './node-event-sequence';
 import { saveExecutionProgress } from './save-execution-progress';
 import {
 	determineFinalExecutionStatus,
@@ -309,15 +310,6 @@ function hookFunctionsPush(
 		return !licenseState.isDataRedactionLicensed();
 	}
 
-	// Monotonic counter over this execution segment's node-event pushes so the UI
-	// can order events that arrive late or out of order (e.g. after a suspended
-	// background tab resumes) and render only the latest node as executing
-	// (CAT-2895). Assigned in engine order here on the instance running the
-	// workflow; it rides the worker→main pubsub relay unchanged. Scoped to a
-	// segment: this closure is per run, so a waiting-execution (Wait/Form node)
-	// resume rebuilds the hooks and restarts the counter at 0.
-	let nodeEventSequence = 0;
-
 	hooks.addHandler('nodeExecuteBefore', function (nodeName, data) {
 		const { executionId } = this;
 		// Push data to session which started workflow before each
@@ -332,7 +324,12 @@ function hookFunctionsPush(
 			executionId,
 			{
 				type: 'nodeExecuteBefore',
-				data: { executionId, nodeName, sequenceNumber: nodeEventSequence++, data },
+				data: {
+					executionId,
+					nodeName,
+					sequenceNumber: nodeEventSequence(data.executionIndex, 'started'),
+					data,
+				},
 			},
 			pushRef,
 		);
@@ -356,13 +353,17 @@ function hookFunctionsPush(
 				data: {
 					executionId,
 					nodeName,
-					sequenceNumber: nodeEventSequence++,
+					sequenceNumber: nodeEventSequence(data.executionIndex, 'finished'),
 					itemCountByConnectionType,
 					data: taskData,
 				},
 			},
 			pushRef,
 		);
+
+		// Redaction is work per node; skip it, and the data push it prepares, when the
+		// event has nobody to reach — the common case for a run nobody has open.
+		if (!pushInstance.hasRecipients(executionId, pushRef)) return;
 
 		// Fail-closed redaction: if user cannot be resolved, skip the data push
 		// entirely rather than sending unredacted data to the client.
@@ -431,9 +432,12 @@ function hookFunctionsPush(
 		// Apply copy-on-write redaction to flattedRunData when retrying/resuming.
 		// Fail-closed: if user cannot be resolved or redaction throws, send
 		// empty runData rather than skipping the push or leaking unredacted data.
-		const user = await getUser();
+		// Redaction is only worth its cost when the event has somebody to reach.
+		const hasRecipients = pushInstance.hasRecipients(executionId, pushRef);
+		const user = hasRecipients ? await getUser() : null;
 		let runDataToStringify: IRunData = {};
-		const hasRunData = data?.resultData.runData && Object.keys(data.resultData.runData).length > 0;
+		const hasRunData =
+			hasRecipients && data?.resultData.runData && Object.keys(data.resultData.runData).length > 0;
 
 		if (hasRunData && user) {
 			try {
@@ -544,8 +548,12 @@ function hookFunctionsSaveProgress(
 }
 
 /**
- * Records each node run as it finishes, and releases the records once the execution's own
- * snapshot covers them.
+ * Records each node run as it starts and as it finishes, and releases the records once the
+ * execution's own snapshot covers them.
+ *
+ * Registered before the push hooks on purpose: a node event is durable before it is live,
+ * so a session that subscribes to the execution and reads the journal sees every event it
+ * was not yet around to receive.
  *
  * This is what makes an unfinished execution readable: its `data` is only written when the
  * run ends, so without a journal a run that is still going — or one that died before that
@@ -560,6 +568,10 @@ function hookFunctionsJournal(
 	if (!saveSettings.liveProgress) return;
 
 	const journal = Container.get(ExecutionJournalService);
+
+	hooks.addHandler('nodeExecuteBefore', async function (nodeName, data) {
+		await journal.recordNodeStart(this.executionId, nodeName, data);
+	});
 
 	hooks.addHandler('nodeExecuteAfter', async function (nodeName, data, executionData) {
 		await journal.recordNodeRun(this.executionId, nodeName, data, executionData);
@@ -872,6 +884,9 @@ export function getLifecycleHooksForSubExecutions(
 	hookFunctionsSave(hooks, { saveSettings, parentExecution });
 	hookFunctionsSaveProgress(hooks, { saveSettings });
 	hookFunctionsJournal(hooks, { saveSettings });
+	// A sub-execution has no originating session, but it can be opened from its parent and
+	// is then observable like any other run.
+	hookFunctionsPush(hooks, { saveSettings }, userId);
 	hookFunctionsStatistics(hooks);
 	hookFunctionsExternalHooks(hooks);
 	Container.get(ModulesHooksRegistry).addHooks(hooks);
@@ -1057,9 +1072,9 @@ export function getLifecycleHooksForRegularMain(
 	hookFunctionsNodeEvents(hooks);
 	hookFunctionsFinalizeExecutionStatus(hooks);
 	hookFunctionsSave(hooks, optionalParameters);
-	hookFunctionsPush(hooks, optionalParameters, userId, source);
 	hookFunctionsSaveProgress(hooks, optionalParameters);
 	hookFunctionsJournal(hooks, optionalParameters);
+	hookFunctionsPush(hooks, optionalParameters, userId, source);
 	hookFunctionsStatistics(hooks, source);
 	hookFunctionsExternalHooks(hooks, source);
 	Container.get(ModulesHooksRegistry).addHooks(hooks, source);

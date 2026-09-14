@@ -127,6 +127,18 @@ export type PubSubCommandMap = {
 		asBinary: boolean;
 	};
 
+	/**
+	 * A session's request to watch, or stop watching, an execution, taken by a main that
+	 * does not hold the session. The main that holds it registers the subscription and
+	 * answers with the snapshot; `userId` names who the snapshot is redacted for.
+	 */
+	'relay-execution-subscription': {
+		action: 'subscribe' | 'unsubscribe';
+		executionId: string;
+		pushRef: string;
+		userId?: string;
+	};
+
 	'relay-agent-execution-update': {
 		data: PushPayload<'agentExecutionUpdated'>;
 		userIds: string[];

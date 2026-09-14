@@ -31,7 +31,6 @@ import {
 import { disposeNDVStore, useNDVStore } from '@/features/ndv/shared/ndv.store';
 import { getExecutionErrorToastConfiguration } from '@/features/execution/executions/executions.utils';
 import { useLogsStore } from '@/app/stores/logs.store';
-import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
 
 export interface UseExecutionPreviewDocumentOptions {
 	executionId: MaybeRefOrGetter<string>;
@@ -56,7 +55,6 @@ export function useExecutionPreviewDocument(options: UseExecutionPreviewDocument
 	const externalHooks = useExternalHooks();
 	const workflowsStore = useWorkflowsStore();
 	const logsStore = useLogsStore();
-	const executionWatchStore = useExecutionWatchStore();
 	const { normalizeWorkflowData } = useWorkflowNormalization();
 
 	/** Provide this under `WorkflowDocumentStoreKey`; null until the first load completes. */
@@ -88,30 +86,6 @@ export function useExecutionPreviewDocument(options: UseExecutionPreviewDocument
 	 * ids to protect even after a failed load nulled `documentStore`.
 	 */
 	let previewWorkflowId: string | undefined;
-
-	/**
-	 * The execution this preview is following live, if any. An execution that has not
-	 * reached a terminal state keeps running after it is opened, and its events reach
-	 * this session only while it is watched — so exactly one is watched at a time, the
-	 * one on screen.
-	 */
-	let watchedExecution: { executionId: string; documentId: WorkflowDocumentId } | null = null;
-
-	function stopWatching() {
-		if (watchedExecution === null) return;
-
-		executionWatchStore.unwatchExecution(watchedExecution.executionId, watchedExecution.documentId);
-		watchedExecution = null;
-	}
-
-	function followExecution(loaded: IExecutionResponse, documentId: WorkflowDocumentId) {
-		stopWatching();
-
-		if (isTerminalExecutionStatus(loaded.status)) return;
-
-		executionWatchStore.watchExecution(loaded.id, documentId);
-		watchedExecution = { executionId: loaded.id, documentId };
-	}
 
 	/**
 	 * Marks an execution as most-recently-used. `Set` preserves insertion order
@@ -261,6 +235,8 @@ export function useExecutionPreviewDocument(options: UseExecutionPreviewDocument
 				versionId: documentVersion,
 			} as IWorkflowDb);
 
+			// Displaying the execution is what makes the document follow it live while it
+			// runs; the execution-state store derives the subscription from what it shows.
 			useWorkflowExecutionStateStore(documentId).setWorkflowExecutionData(data);
 			touchLoadedExecution(executionId);
 			evictLeastRecentlyUsedExecutions(executionId, workflowId);
@@ -273,7 +249,6 @@ export function useExecutionPreviewDocument(options: UseExecutionPreviewDocument
 
 			execution.value = data;
 			documentStore.value = scopedDocumentStore;
-			followExecution(data, documentId);
 
 			// Oversized executions have no run data to show, so open the logs panel to avoid an empty view
 			if (data.dataTooLargeToDisplay) {
@@ -328,7 +303,6 @@ export function useExecutionPreviewDocument(options: UseExecutionPreviewDocument
 
 	function dispose() {
 		latestLoadRequestId += 1;
-		stopWatching();
 
 		// Every preview document shares the executions-tab workflow id. Use the
 		// tracked id rather than `documentStore.value` — the latter is nulled by a

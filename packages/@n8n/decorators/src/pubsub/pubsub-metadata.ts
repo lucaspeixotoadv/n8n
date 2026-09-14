@@ -25,6 +25,7 @@ export type PubSubEventName =
 	| 'response-to-get-worker-status'
 	| 'restart-event-bus'
 	| 'relay-execution-lifecycle-event'
+	| 'relay-execution-subscription'
 	| 'relay-agent-execution-update'
 	| 'resume-agent-workflow-tool'
 	| 'deliver-pending-callbacks'

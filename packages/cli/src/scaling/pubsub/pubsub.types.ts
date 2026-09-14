@@ -59,6 +59,7 @@ export namespace PubSub {
 		export type DisplayWorkflowPublicationStatus = ToCommand<'display-workflow-publication-status'>;
 		export type WorkflowPublishWakeUp = ToCommand<'workflow-publish-wake-up'>;
 		export type RelayExecutionLifecycleEvent = ToCommand<'relay-execution-lifecycle-event'>;
+		export type RelayExecutionSubscription = ToCommand<'relay-execution-subscription'>;
 		export type RelayAgentExecutionUpdate = ToCommand<'relay-agent-execution-update'>;
 		export type ResumeAgentWorkflowTool = ToCommand<'resume-agent-workflow-tool'>;
 		export type DeliverPendingCallbacks = ToCommand<'deliver-pending-callbacks'>;
@@ -105,6 +106,7 @@ export namespace PubSub {
 		| Commands.DisplayWorkflowPublicationStatus
 		| Commands.WorkflowPublishWakeUp
 		| Commands.RelayExecutionLifecycleEvent
+		| Commands.RelayExecutionSubscription
 		| Commands.RelayAgentExecutionUpdate
 		| Commands.ResumeAgentWorkflowTool
 		| Commands.DeliverPendingCallbacks

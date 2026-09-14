@@ -5,10 +5,14 @@ import type { Router } from 'vue-router';
 import { createWorkflowDocumentId } from '@/app/stores/workflowDocument.store';
 import { useWorkflowExecutionStateStore } from '@/app/stores/workflowExecutionState.store';
 import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
-import { usePushConnectionStore } from '@/app/stores/pushConnection.store';
 
 import { allExecutionDocuments, resolveExecutionDocuments } from './executionDocuments';
 import type { PushHandlerOptions } from './types';
+
+vi.mock('@/features/execution/executions/executionWatch.api', () => ({
+	watchExecution: vi.fn(async () => {}),
+	unwatchExecution: vi.fn(async () => {}),
+}));
 
 describe('resolveExecutionDocuments', () => {
 	const documentId = createWorkflowDocumentId('test-wf');
@@ -18,7 +22,6 @@ describe('resolveExecutionDocuments', () => {
 	beforeEach(() => {
 		setActivePinia(createPinia());
 		options = { router: mock<Router>(), documentId };
-		vi.spyOn(usePushConnectionStore(), 'send').mockImplementation(() => {});
 	});
 
 	it('returns nothing for an execution no document shows', () => {
@@ -37,7 +40,7 @@ describe('resolveExecutionDocuments', () => {
 	});
 
 	it('names a document that only displays the execution as a watcher', () => {
-		useExecutionWatchStore().watchExecution('exec-1', previewDocumentId);
+		useExecutionWatchStore().observe(previewDocumentId, 'exec-1');
 
 		const documents = resolveExecutionDocuments('exec-1', options);
 
@@ -50,7 +53,7 @@ describe('resolveExecutionDocuments', () => {
 
 	it('does not list the owning document twice when it also watches', () => {
 		useWorkflowExecutionStateStore(documentId).setActiveExecutionId('exec-1');
-		useExecutionWatchStore().watchExecution('exec-1', documentId);
+		useExecutionWatchStore().observe(documentId, 'exec-1');
 
 		const documents = resolveExecutionDocuments('exec-1', options);
 
@@ -69,7 +72,7 @@ describe('resolveExecutionDocuments', () => {
 
 	it('puts the owner first when both an owner and watchers exist', () => {
 		useWorkflowExecutionStateStore(documentId).setActiveExecutionId('exec-1');
-		useExecutionWatchStore().watchExecution('exec-1', previewDocumentId);
+		useExecutionWatchStore().observe(previewDocumentId, 'exec-1');
 
 		expect(allExecutionDocuments(resolveExecutionDocuments('exec-1', options))).toEqual([
 			documentId,

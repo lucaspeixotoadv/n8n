@@ -66,6 +66,41 @@ describe('ExecutionJournalService', () => {
 		]);
 	});
 
+	it("records a node run as it starts, with no position among the node's runs yet", async () => {
+		const service = makeService();
+		const started = { startTime: 5, executionIndex: 3, source: [] };
+
+		await service.recordNodeStart(EXECUTION_ID, 'Agent', started);
+
+		expect(appended()).toEqual([
+			expect.objectContaining({
+				executionId: EXECUTION_ID,
+				kind: 'started',
+				nodeName: 'Agent',
+				runIndex: null,
+				taskData: started,
+			}),
+		]);
+	});
+
+	it('marks a finished run as such, in the same order as the starts', async () => {
+		const service = makeService();
+		const trigger = task('trigger');
+
+		await service.recordNodeStart(EXECUTION_ID, 'Trigger', trigger);
+		await service.recordNodeRun(
+			EXECUTION_ID,
+			'Trigger',
+			trigger,
+			runExecutionData({ Trigger: [trigger] }),
+		);
+
+		expect(appended().map((row) => [row.seq, row.kind])).toEqual([
+			[1, 'started'],
+			[2, 'finished'],
+		]);
+	});
+
 	it('orders runs so a consumer can tell what it has already seen', async () => {
 		const service = makeService();
 		const first = task('a');
@@ -139,7 +174,7 @@ describe('ExecutionJournalService', () => {
 
 		const [row] = appended();
 		expect(row.nodeName).toBe('Big');
-		expect(row.taskData.data).toEqual({ journalTruncated: true });
+		expect((row.taskData as ITaskData).data).toEqual({ journalTruncated: true });
 	});
 
 	it('never fails an execution because its progress could not be recorded', async () => {

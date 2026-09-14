@@ -2,7 +2,7 @@ import { Logger } from '@n8n/backend-common';
 import { ExecutionNodeRun, ExecutionNodeRunRepository } from '@n8n/db';
 import { Container, Service } from '@n8n/di';
 import { ensureError } from '@n8n/utils/errors/ensure-error';
-import type { IRunExecutionData, ITaskData } from 'n8n-workflow';
+import type { IRunExecutionData, ITaskData, ITaskStartedData } from 'n8n-workflow';
 
 import { ExecutionJournalConfig } from './execution-journal.config';
 
@@ -17,6 +17,10 @@ const OVERSIZED_TASK_PLACEHOLDER = { journalTruncated: true } as const;
  * cancelled, crashes or loses its worker can read as if nothing had happened. This journal
  * closes the gap without turning every node into a rewrite of the whole execution, which is
  * what made the existing progress-saving option too expensive to leave on.
+ *
+ * Both ends of a node run are recorded. The finished run is what a reader folds into the
+ * execution's run data; the started run is how a reader that joins mid-run learns which
+ * node the execution is on right now, since that node has finished nothing yet.
  *
  * Whether a run is journalled at all is the workflow's decision, resolved in `toSaveSettings`
  * and applied where the hooks are built — this service records what it is handed.
@@ -45,26 +49,50 @@ export class ExecutionJournalService {
 		return Container.get(ExecutionNodeRunRepository);
 	}
 
+	/** Records that a node run began; its finished counterpart replaces it for readers. */
+	async recordNodeStart(
+		executionId: string,
+		nodeName: string,
+		taskStartedData: ITaskStartedData,
+	): Promise<void> {
+		await this.append(executionId, nodeName, (row) => {
+			row.kind = 'started';
+			row.runIndex = null;
+			row.taskData = taskStartedData;
+		});
+	}
+
 	async recordNodeRun(
 		executionId: string,
 		nodeName: string,
 		taskData: ITaskData,
 		executionData: IRunExecutionData,
 	): Promise<void> {
+		await this.append(executionId, nodeName, (row) => {
+			row.kind = 'finished';
+			row.runIndex = this.resolveRunIndex(executionData, nodeName, taskData);
+			row.taskData = this.withinSizeLimit(taskData)
+				? taskData
+				: ({ ...taskData, data: OVERSIZED_TASK_PLACEHOLDER } as unknown as ITaskData);
+		});
+	}
+
+	private async append(
+		executionId: string,
+		nodeName: string,
+		fill: (row: ExecutionNodeRun) => void,
+	): Promise<void> {
 		try {
 			const row = new ExecutionNodeRun();
 			row.executionId = executionId;
 			row.seq = await this.claimSeq(executionId);
 			row.nodeName = nodeName;
-			row.runIndex = this.resolveRunIndex(executionData, nodeName, taskData);
-			row.taskData = this.withinSizeLimit(taskData)
-				? taskData
-				: ({ ...taskData, data: OVERSIZED_TASK_PLACEHOLDER } as unknown as ITaskData);
 			row.createdAt = new Date();
+			fill(row);
 
 			await this.repository.append([row]);
 		} catch (error) {
-			this.logger.warn('Could not journal a node run', {
+			this.logger.warn('Could not journal a node event', {
 				executionId,
 				nodeName,
 				error: ensureError(error).message,

@@ -8,6 +8,7 @@ import { NotImplementedError } from '@/errors/response-errors/not-implemented.er
 import type { ExecutionService } from '@/executions/execution.service';
 import type { ExecutionRequest } from '@/executions/execution.types';
 import { ExecutionsController } from '@/executions/executions.controller';
+import type { ExecutionSubscriptionService } from '@/push/execution-subscription.service';
 import type { WorkflowSharingService } from '@/workflows/workflow-sharing.service';
 
 const V2_EXECUTION_ID = '01a038ae-c4a8-7799-8a3e-e3c2ca055cfa';
@@ -15,16 +16,63 @@ const V2_EXECUTION_ID = '01a038ae-c4a8-7799-8a3e-e3c2ca055cfa';
 describe('ExecutionsController', () => {
 	const executionService = mock<ExecutionService>();
 	const workflowSharingService = mock<WorkflowSharingService>();
+	const executionSubscriptionService = mock<ExecutionSubscriptionService>();
 
 	const executionsController = new ExecutionsController(
 		executionService,
 		mock(),
 		workflowSharingService,
 		mock(),
+		executionSubscriptionService,
 	);
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	describe('watch', () => {
+		const user = mock<User>({ id: 'user-1' });
+
+		it('should subscribe the session named by the push-ref header', async () => {
+			const req = mock<ExecutionRequest.Watch>({
+				params: { id: '42' },
+				user,
+				headers: { 'push-ref': 'session-1' },
+			});
+
+			await executionsController.watch(req);
+
+			expect(executionSubscriptionService.subscribe).toHaveBeenCalledWith(user, '42', 'session-1');
+		});
+
+		it('should 400 without a push-ref header', async () => {
+			const req = mock<ExecutionRequest.Watch>({ params: { id: '42' }, user, headers: {} });
+
+			await expect(executionsController.watch(req)).rejects.toThrow(BadRequestError);
+			expect(executionSubscriptionService.subscribe).not.toHaveBeenCalled();
+		});
+
+		it('should 400 when the id is neither a positive integer nor a uuid', async () => {
+			const req = mock<ExecutionRequest.Watch>({
+				params: { id: 'abc' },
+				user,
+				headers: { 'push-ref': 'session-1' },
+			});
+
+			await expect(executionsController.watch(req)).rejects.toThrow(BadRequestError);
+		});
+
+		it('should unsubscribe the session named by the push-ref header', async () => {
+			const req = mock<ExecutionRequest.Watch>({
+				params: { id: '42' },
+				user,
+				headers: { 'push-ref': 'session-1' },
+			});
+
+			await executionsController.unwatch(req);
+
+			expect(executionSubscriptionService.unsubscribe).toHaveBeenCalledWith('42', 'session-1');
+		});
 	});
 
 	describe('getOne', () => {

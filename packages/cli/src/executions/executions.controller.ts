@@ -1,6 +1,6 @@
 import { DeleteExecutionsDto } from '@n8n/api-types';
 import type { AuthenticatedRequest, User, ExecutionSummaries } from '@n8n/db';
-import { Body, Get, Patch, Post, RestController } from '@n8n/decorators';
+import { Body, Delete, Get, Patch, Post, RestController } from '@n8n/decorators';
 import type { Scope } from '@n8n/permissions';
 import type { Response } from 'express';
 
@@ -8,6 +8,7 @@ import { BadRequestError } from '@/errors/response-errors/bad-request.error';
 import { NotFoundError } from '@/errors/response-errors/not-found.error';
 import { NotImplementedError } from '@/errors/response-errors/not-implemented.error';
 import { License } from '@/license';
+import { ExecutionSubscriptionService } from '@/push/execution-subscription.service';
 import { isPositiveInteger } from '@/utils';
 import { WorkflowSharingService } from '@/workflows/workflow-sharing.service';
 
@@ -25,7 +26,17 @@ export class ExecutionsController {
 		private readonly enterpriseExecutionService: EnterpriseExecutionsService,
 		private readonly workflowSharingService: WorkflowSharingService,
 		private readonly license: License,
+		private readonly executionSubscriptionService: ExecutionSubscriptionService,
 	) {}
+
+	/** The session a watch request is for; a request without one has nothing to deliver to. */
+	private requirePushRef(req: AuthenticatedRequest): string {
+		const pushRef = req.headers['push-ref'];
+		if (typeof pushRef !== 'string' || pushRef.length === 0) {
+			throw new BadRequestError('Missing push-ref header');
+		}
+		return pushRef;
+	}
 
 	private async getAccessibleWorkflowIds(user: User, scope: Scope) {
 		return await this.workflowSharingService.getSharedWorkflowIds(user, { scopes: [scope] });
@@ -97,6 +108,28 @@ export class ExecutionsController {
 		return this.license.isSharingEnabled()
 			? await this.enterpriseExecutionService.findOne(req, workflowIds)
 			: await this.executionService.findOne(req, workflowIds);
+	}
+
+	/**
+	 * Starts sending the execution's events to the session named by the `push-ref` header,
+	 * beginning with a snapshot of what it has done so far.
+	 */
+	@Post('/:id/watch')
+	async watch(req: ExecutionRequest.Watch) {
+		this.assertKnownExecutionId(req.params.id);
+
+		await this.executionSubscriptionService.subscribe(
+			req.user,
+			req.params.id,
+			this.requirePushRef(req),
+		);
+	}
+
+	@Delete('/:id/watch')
+	async unwatch(req: ExecutionRequest.Watch) {
+		this.assertKnownExecutionId(req.params.id);
+
+		await this.executionSubscriptionService.unsubscribe(req.params.id, this.requirePushRef(req));
 	}
 
 	@Post('/:id/stop')

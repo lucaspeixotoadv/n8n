@@ -8,16 +8,22 @@ import type { ITaskData } from 'n8n-workflow';
 import { createWorkflowDocumentId } from '@/app/stores/workflowDocument.store';
 import { useWorkflowExecutionStateStore } from '@/app/stores/workflowExecutionState.store';
 import { createExecutionDataId, useExecutionDataStore } from '@/app/stores/executionData.store';
-import { usePushConnectionStore } from '@/app/stores/pushConnection.store';
 import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
 import { createTestWorkflowExecutionResponse } from '@/__tests__/mocks';
 
 import { executionSnapshot } from './executionSnapshot';
 import type { PushHandlerOptions } from './types';
 
-vi.mock('./executionFinished', () => ({ refreshWatchingDocuments: vi.fn() }));
+vi.mock('./executionFinished', () => ({
+	refreshWatchingDocuments: vi.fn(),
+	executionFinished: vi.fn(),
+}));
+vi.mock('@/features/execution/executions/executionWatch.api', () => ({
+	watchExecution: vi.fn(async () => {}),
+	unwatchExecution: vi.fn(async () => {}),
+}));
 
-import { refreshWatchingDocuments } from './executionFinished';
+import { executionFinished, refreshWatchingDocuments } from './executionFinished';
 
 const task = (executionIndex: number, value: unknown): ITaskData =>
 	({
@@ -58,12 +64,11 @@ describe('executionSnapshot', () => {
 		vi.clearAllMocks();
 		setActivePinia(createPinia());
 		options = { router: mock<Router>(), documentId: editorDocumentId };
-		vi.spyOn(usePushConnectionStore(), 'send').mockImplementation(() => {});
-		useExecutionWatchStore().watchExecution('exec-1', previewDocumentId);
+		useExecutionWatchStore().observe(previewDocumentId, 'exec-1');
 	});
 
 	it('does nothing for an execution no document shows', async () => {
-		useExecutionWatchStore().unwatchExecution('exec-1', previewDocumentId);
+		useExecutionWatchStore().observe(previewDocumentId, null);
 		const store = displayRunning({});
 
 		await executionSnapshot(
@@ -127,21 +132,100 @@ describe('executionSnapshot', () => {
 		expect(stateStore.executingNode.isNodeExecuting('A')).toBe(false);
 	});
 
-	it('keeps a node executing while the snapshot says the execution still runs', async () => {
-		displayRunning({});
-		const stateStore = useWorkflowExecutionStateStore(previewDocumentId);
-		stateStore.executingNode.addExecutingNode('A', 0);
-
-		await executionSnapshot(makeEvent({ status: 'running' }), options);
-
-		expect(stateStore.executingNode.isNodeExecuting('A')).toBe(true);
-	});
-
 	it('treats a terminal snapshot as the finish the session missed', async () => {
 		displayRunning({});
 
 		await executionSnapshot(makeEvent({ status: 'success' }), options);
 
 		expect(refreshWatchingDocuments).toHaveBeenCalledWith('exec-1', [previewDocumentId]);
+		expect(executionFinished).not.toHaveBeenCalled();
+	});
+
+	it('settles a terminal snapshot the way the finish would for the document that started the run', async () => {
+		displayRunning({});
+		useWorkflowExecutionStateStore(editorDocumentId).setActiveExecutionId('exec-1');
+
+		await executionSnapshot(makeEvent({ status: 'error' }), options);
+
+		expect(executionFinished).toHaveBeenCalledWith(
+			{
+				type: 'executionFinished',
+				data: { executionId: 'exec-1', workflowId: 'wf-1', status: 'error' },
+			},
+			options,
+		);
+		expect(refreshWatchingDocuments).not.toHaveBeenCalled();
+	});
+
+	describe('the node the execution is on', () => {
+		const started = (executionIndex: number) => ({
+			startTime: executionIndex,
+			executionIndex,
+			source: [],
+		});
+
+		it('is shown as executing, replacing whatever the document showed before', async () => {
+			const store = displayRunning({});
+			const stateStore = useWorkflowExecutionStateStore(previewDocumentId);
+			// A node the session saw start before the snapshot was built; the snapshot does
+			// not name it, so it has finished meanwhile.
+			stateStore.executingNode.addExecutingNode('A', 0);
+
+			await executionSnapshot(
+				makeEvent({
+					executingNodes: [{ nodeName: 'B', sequenceNumber: 2, data: started(1) }],
+				}),
+				options,
+			);
+
+			expect(stateStore.executingNode.isNodeExecuting('A')).toBe(false);
+			expect(stateStore.executingNode.isNodeExecuting('B')).toBe(true);
+			expect(store.executionStartedData?.[1]).toEqual({ B: [started(1)] });
+		});
+
+		it('is the latest of nested runs, and the earlier ones are still recorded as started', async () => {
+			const store = displayRunning({});
+			const stateStore = useWorkflowExecutionStateStore(previewDocumentId);
+
+			await executionSnapshot(
+				makeEvent({
+					executingNodes: [
+						{ nodeName: 'Agent', sequenceNumber: 2, data: started(1) },
+						{ nodeName: 'Tool', sequenceNumber: 4, data: started(2) },
+					],
+				}),
+				options,
+			);
+
+			expect(stateStore.executingNode.isNodeExecuting('Tool')).toBe(true);
+			expect(stateStore.executingNode.isNodeExecuting('Agent')).toBe(false);
+			expect(Object.keys(store.executionStartedData?.[1] ?? {})).toEqual(['Agent', 'Tool']);
+		});
+
+		it('lets the events that follow the snapshot supersede it, and drops the ones before it', async () => {
+			displayRunning({});
+			const stateStore = useWorkflowExecutionStateStore(previewDocumentId);
+
+			await executionSnapshot(
+				makeEvent({ executingNodes: [{ nodeName: 'B', sequenceNumber: 2, data: started(1) }] }),
+				options,
+			);
+			// Older than the snapshot: a late delivery of a node that has since finished.
+			stateStore.executingNode.addExecutingNode('A', 0);
+			expect(stateStore.executingNode.isNodeExecuting('B')).toBe(true);
+			// Newer than the snapshot.
+			stateStore.executingNode.addExecutingNode('C', 4);
+			expect(stateStore.executingNode.isNodeExecuting('C')).toBe(true);
+		});
+
+		it('is none when the snapshot names no running node', async () => {
+			displayRunning({});
+			const stateStore = useWorkflowExecutionStateStore(previewDocumentId);
+			stateStore.executingNode.addExecutingNode('A', 0);
+
+			await executionSnapshot(makeEvent({ status: 'running' }), options);
+
+			expect(stateStore.executingNode.isNodeExecuting('A')).toBe(false);
+		});
 	});
 });

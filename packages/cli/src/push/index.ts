@@ -224,6 +224,23 @@ export class Push extends TypedEmitter<PushEvents> {
 		}
 	}
 
+	/**
+	 * Whether an event of this execution would reach anybody from here.
+	 *
+	 * Lets a producer skip work that only serves delivery, such as redacting node output,
+	 * for a run nobody has open. A worker and a multi-main instance cannot know who watches
+	 * elsewhere, so from them every event is worth preparing.
+	 */
+	hasRecipients(executionId: string, originPushRef?: string): boolean {
+		const { isWorker, isMultiMain } = this.instanceSettings;
+		if (isWorker || isMultiMain) return true;
+
+		return (
+			this.executionSubscriptions.hasSubscribers(executionId) ||
+			(originPushRef !== undefined && this.hasPushRef(originPushRef))
+		);
+	}
+
 	sendToUsers(pushMsg: PushMessage, userIds: Array<User['id']>) {
 		this.backend.sendToUsers(pushMsg, userIds);
 	}
