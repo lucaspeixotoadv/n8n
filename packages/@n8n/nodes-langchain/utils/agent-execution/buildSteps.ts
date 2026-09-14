@@ -357,7 +357,7 @@ export function buildSteps(
 
 	// First pass: collect all valid tool responses for this batch
 	const batchTools: ProcessedToolResponse[] = [];
-	for (const tool of responses) {
+	for (const [responseIndex, tool] of responses.entries()) {
 		if (tool.action?.metadata?.itemIndex !== itemIndex) continue;
 
 		const toolInput: IDataObject = {
@@ -366,11 +366,18 @@ export function buildSteps(
 		};
 		if (!tool.data) continue;
 
-		const existingStep = steps.find((s) => s.action.toolCallId === toolInput.id);
+		// Only a real id identifies a call. An empty id (a provider that reports none, on a
+		// request created before ids were synthesized) must not make two calls look alike.
+		const hasUsableId = typeof toolInput.id === 'string' && toolInput.id.length > 0;
+		const existingStep = hasUsableId
+			? steps.find((s) => s.action.toolCallId === toolInput.id)
+			: undefined;
 		if (existingStep) continue;
 
 		const providerMetadata = extractProviderMetadata(tool.action.metadata);
-		const toolId = typeof toolInput?.id === 'string' ? toolInput.id : 'reconstructed_call';
+		const toolId = hasUsableId
+			? (toolInput.id as string)
+			: `reconstructed_call_${itemIndex}_${responseIndex}`;
 		const toolName = resolveToolName(tool);
 
 		batchTools.push({
@@ -423,7 +430,7 @@ export function buildSteps(
 				toolInput: toolInputForResult,
 				log: toolInput.log || logFallback,
 				messageLog,
-				toolCallId: toolInput?.id,
+				toolCallId: toolId,
 				type: toolInput.type || 'tool_call',
 			},
 			observation,

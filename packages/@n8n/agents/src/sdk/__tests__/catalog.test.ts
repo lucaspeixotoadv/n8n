@@ -1,4 +1,4 @@
-import { computeCost, fetchProviderCatalog } from '../catalog';
+import { computeCost, fetchProviderCatalog, getModelCost } from '../catalog';
 
 describe('fetchProviderCatalog', () => {
 	const originalFetch = global.fetch;
@@ -363,5 +363,31 @@ describe('computeCost', () => {
 		);
 
 		expect(cost).toBeCloseTo(3 * 2);
+	});
+});
+
+describe('getModelCost', () => {
+	const originalFetch = global.fetch;
+
+	afterEach(() => {
+		global.fetch = originalFetch;
+	});
+
+	it('prices a model from the shipped snapshot without touching the network', async () => {
+		const fetchMock = vi.fn();
+		global.fetch = fetchMock as unknown as typeof fetch;
+
+		const cost = await getModelCost('anthropic/claude-sonnet-4-5');
+
+		expect(cost).toMatchObject({ input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 });
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('maps agent provider ids onto the snapshot provider ids', async () => {
+		global.fetch = vi.fn() as unknown as typeof fetch;
+
+		const cost = await getModelCost('aws-bedrock/anthropic.claude-haiku-4-5-20251001-v1:0');
+
+		expect(cost).toBeDefined();
 	});
 });

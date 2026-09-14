@@ -1717,4 +1717,74 @@ describe('buildSteps', () => {
 			).toBeUndefined();
 		});
 	});
+
+	describe('Tool calls without an id', () => {
+		const responseFor = (id: string, expression: string, nodeName = 'Calculator') => ({
+			action: {
+				actionType: 'ExecutionNodeAction' as const,
+				nodeName,
+				input: { expression },
+				type: NodeConnectionTypes.AiTool,
+				id,
+				metadata: { itemIndex: 0 },
+			},
+			data: {
+				data: { ai_tool: [[{ json: { result: expression } }]] },
+				executionTime: 0,
+				startTime: 0,
+				executionIndex: 0,
+				source: [],
+			},
+		});
+
+		it('never treats two id-less responses as the same call', () => {
+			const response: EngineResponse<RequestResponseMetadata> = {
+				actionResponses: [responseFor('', '1+1'), responseFor('', '2+2')],
+				metadata: {},
+			};
+
+			const result = buildSteps(response, itemIndex);
+
+			expect(result).toHaveLength(2);
+			expect(result[0].action.toolCallId).toBe('reconstructed_call_0_0');
+			expect(result[1].action.toolCallId).toBe('reconstructed_call_0_1');
+			expect(result[0].observation).toContain('1+1');
+			expect(result[1].observation).toContain('2+2');
+		});
+
+		it('does not drop an id-less response because a previous request also lacks an id', () => {
+			const response: EngineResponse<RequestResponseMetadata> = {
+				actionResponses: [responseFor('', '2+2')],
+				metadata: {
+					previousRequests: [
+						{
+							action: {
+								tool: 'calculator',
+								toolInput: { expression: '1+1' },
+								log: 'Previous',
+								toolCallId: '',
+								type: 'tool_call',
+							},
+							observation: '2',
+						},
+					],
+				},
+			};
+
+			const result = buildSteps(response, itemIndex);
+
+			expect(result).toHaveLength(2);
+		});
+
+		it('pairs the rebuilt AIMessage and ToolMessage of an id-less call under the same id', () => {
+			const response: EngineResponse<RequestResponseMetadata> = {
+				actionResponses: [responseFor('', '3+3')],
+				metadata: {},
+			};
+
+			const [step] = buildSteps(response, itemIndex);
+
+			expect(step.action.messageLog?.[0].tool_calls?.[0].id).toBe(step.action.toolCallId);
+		});
+	});
 });

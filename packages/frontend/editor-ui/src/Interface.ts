@@ -980,6 +980,23 @@ export interface LlmTokenUsageData {
 	promptTokens: number;
 	totalTokens: number;
 	isEstimate: boolean;
+	/** Subset of `promptTokens` served from the provider's prompt cache. */
+	cacheReadTokens?: number;
+	/** Subset of `promptTokens` written to the provider's prompt cache. */
+	cacheWriteTokens?: number;
+	/** Subset of `completionTokens` spent on reasoning. */
+	reasoningTokens?: number;
+	/**
+	 * Monetary cost as the backend computed it; `isComplete` is false when some of the
+	 * summed invocations had no cost (unknown model, estimated usage).
+	 */
+	cost?: LlmCostData;
+}
+
+export interface LlmCostData {
+	amount: number;
+	currency: 'USD';
+	isComplete: boolean;
 }
 
 export interface WorkflowValidationIssue {

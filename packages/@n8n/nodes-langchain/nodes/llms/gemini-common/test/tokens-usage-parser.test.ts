@@ -24,7 +24,7 @@ describe('geminiTokensUsageParser', () => {
 		});
 	});
 
-	it('reports cached tokens without adjusting the prompt total', () => {
+	it('reports cached tokens as a subset of the prompt total', () => {
 		const usage = geminiTokensUsageParser(
 			resultWithMessage({
 				input_tokens: 5000,
@@ -38,7 +38,21 @@ describe('geminiTokensUsageParser', () => {
 			completionTokens: 40,
 			promptTokens: 5000,
 			totalTokens: 5040,
-			cacheReadInputTokens: 4096,
+			cacheReadTokens: 4096,
+		});
+	});
+
+	it('folds thinking tokens into the completion and exposes them as reasoning', () => {
+		// candidatesTokenCount = 40, thoughtsTokenCount = 260, totalTokenCount = 100 + 40 + 260
+		const usage = geminiTokensUsageParser(
+			resultWithMessage({ input_tokens: 100, output_tokens: 40, total_tokens: 400 }),
+		);
+
+		expect(usage).toEqual({
+			completionTokens: 300,
+			promptTokens: 100,
+			totalTokens: 400,
+			reasoningTokens: 260,
 		});
 	});
 
@@ -52,7 +66,7 @@ describe('geminiTokensUsageParser', () => {
 			}),
 		);
 
-		expect(usage).not.toHaveProperty('cacheReadInputTokens');
+		expect(usage).not.toHaveProperty('cacheReadTokens');
 	});
 
 	it('falls back to llmOutput.tokenUsage when the message carries no usage_metadata', () => {

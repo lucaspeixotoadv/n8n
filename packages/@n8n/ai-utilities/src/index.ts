@@ -14,7 +14,12 @@ export { getMetadataFiltersValues, hasLongSequentialRepeat } from './utils/helpe
 export { N8nBinaryLoader } from './utils/n8n-binary-loader';
 export { N8nJsonLoader } from './utils/n8n-json-loader';
 export { N8nPdfLoader } from './utils/loaders/n8n-pdf-loader';
-export { N8nLlmTracing } from './utils/n8n-llm-tracing';
+export {
+	N8nLlmTracing,
+	type TokenUsageResult,
+	type TokensUsageParser,
+} from './utils/n8n-llm-tracing';
+export { normalizeLlmResultUsage, fromUsageMetadata } from './utils/llm-usage-normalizer';
 export { redactHeaderValues } from './utils/redact-headers';
 export {
 	TextEditorDocument,

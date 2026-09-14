@@ -1828,6 +1828,105 @@ describe('createLogTree with canvas groups', () => {
 		});
 	}
 
+	it('takes the aggregate the engine published on a run instead of walking its subtree', () => {
+		const llmUsageOf = (own: number, subagents: number) => {
+			const summary = (totalTokens: number, invocations: number) => ({
+				invocations,
+				tokens: {
+					promptTokens: totalTokens,
+					completionTokens: 0,
+					totalTokens,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					reasoningTokens: 0,
+				},
+				tokensEstimated: false,
+				tokensComplete: true,
+				cost: { amount: totalTokens / 1000, currency: 'USD' as const },
+				costComplete: true,
+			});
+			return {
+				own: summary(own, own > 0 ? 1 : 0),
+				subagents: summary(subagents, subagents > 0 ? 1 : 0),
+				total: summary(own + subagents, (own > 0 ? 1 : 0) + (subagents > 0 ? 1 : 0)),
+			};
+		};
+		const workflow = createTestWorkflowObject({
+			id: 'w1',
+			nodes: [
+				createTestNode({ id: 'A', name: 'A' }),
+				createTestNode({ id: 'Model', name: 'Model' }),
+				createTestNode({ id: 'Sub', name: 'Sub' }),
+				createTestNode({ id: 'SubModel', name: 'SubModel' }),
+			],
+			connections: {
+				Model: {
+					[NodeConnectionTypes.AiLanguageModel]: [
+						[{ node: 'A', type: NodeConnectionTypes.AiLanguageModel, index: 0 }],
+					],
+				},
+				Sub: {
+					[NodeConnectionTypes.AiTool]: [
+						[{ node: 'A', type: NodeConnectionTypes.AiTool, index: 0 }],
+					],
+				},
+				SubModel: {
+					[NodeConnectionTypes.AiLanguageModel]: [
+						[{ node: 'Sub', type: NodeConnectionTypes.AiLanguageModel, index: 0 }],
+					],
+				},
+			},
+		});
+		const llmTask = (parent: string, totalTokens: number) =>
+			taskAt(1, {
+				source: [{ previousNode: parent, previousNodeRun: 0 }],
+				data: {
+					[NodeConnectionTypes.AiLanguageModel]: [
+						[
+							{
+								json: {
+									tokenUsage: { promptTokens: totalTokens, completionTokens: 0, totalTokens },
+									cost: { amount: totalTokens / 1000, currency: 'USD', source: 'catalog' },
+								},
+							},
+						],
+					],
+				},
+			});
+		const response = createTestWorkflowExecutionResponse({
+			id: 'e1',
+			data: createRunExecutionData({
+				resultData: {
+					runData: {
+						A: [taskAt(0, { metadata: { llmUsage: llmUsageOf(400, 300) } })],
+						Model: [llmTask('A', 400)],
+						Sub: [
+							taskAt(2, {
+								source: [{ previousNode: 'A', previousNodeRun: 0 }],
+								data: { [NodeConnectionTypes.AiTool]: [[{ json: {} }]] },
+								metadata: { llmUsage: llmUsageOf(300, 0) },
+							}),
+						],
+						SubModel: [llmTask('Sub', 300)],
+					},
+				},
+			}),
+		});
+
+		const [root] = createLogTree(workflow, response);
+
+		// The published total is used as is; the LLM and sub-agent children are not added again
+		expect(getSubtreeTotalConsumedTokens(root, false)).toEqual({
+			promptTokens: 700,
+			completionTokens: 0,
+			totalTokens: 700,
+			isEstimate: false,
+			cost: { amount: 0.7, currency: 'USD', isComplete: true },
+		});
+		const sub = root.children.find((child) => isNodeLog(child) && child.node.name === 'Sub');
+		expect(sub && getSubtreeTotalConsumedTokens(sub, false).totalTokens).toBe(300);
+	});
+
 	it('sums member tokens once for a group', () => {
 		const withTokens = (total: number) => ({
 			data: {

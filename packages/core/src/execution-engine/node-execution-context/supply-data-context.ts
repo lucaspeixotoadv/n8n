@@ -23,6 +23,7 @@ import type {
 import { jsonParse, NodeConnectionTypes } from 'n8n-workflow';
 
 import { BaseExecuteContext } from './base-execute-context';
+import { stampLlmUsage } from '../llm-usage-stamp';
 import {
 	assertBinaryData,
 	detectBinaryEncoding,
@@ -355,6 +356,16 @@ export class SupplyDataContext extends BaseExecuteContext implements ISupplyData
 			if (this.hints.length > 0) {
 				taskData.hints = this.hints;
 			}
+
+			// A sub-node that ran an agent (an AgentTool) publishes its LLM usage here, before
+			// its parent resumes, so the parent only has to read this run's `total`.
+			stampLlmUsage(
+				this.workflow,
+				runExecutionData.resultData.runData,
+				nodeName,
+				currentNodeRunIndex,
+				taskData,
+			);
 
 			await additionalData.hooks?.runHook('nodeExecuteAfter', [
 				nodeName,

@@ -198,6 +198,32 @@ function extractThinkingMetadata(
 }
 
 /**
+ * Builds the id of a tool call whose provider reported none.
+ *
+ * The id is derived from the call's position in the turn (item, iteration, index), so two
+ * distinct calls never collide and re-creating the same request (e.g. when an execution is
+ * rebuilt after a pause) yields the same id. Nothing random is involved.
+ */
+export function buildSyntheticToolCallId(
+	itemIndex: number,
+	iteration: number,
+	index: number,
+): string {
+	return `n8n_call_${itemIndex}_${iteration}_${index}`;
+}
+
+function resolveToolCallId(
+	toolCall: ToolCallRequest,
+	itemIndex: number,
+	iteration: number,
+	index: number,
+): string {
+	const id = toolCall.toolCallId;
+	if (typeof id === 'string' && id.length > 0) return id;
+	return buildSyntheticToolCallId(itemIndex, iteration, index);
+}
+
+/**
  * Creates engine requests from tool calls.
  * Maps tool call information to the format expected by the n8n engine
  * for executing tool nodes.
@@ -208,13 +234,17 @@ function extractThinkingMetadata(
  * @param toolCalls - Array of tool call requests to convert
  * @param itemIndex - The current item index
  * @param tools - Array of available tools
+ * @param options.iteration - Iterations already completed in this turn; used to build
+ *   deterministic ids for tool calls the provider did not identify
  * @returns Array of engine request objects (filtered to remove undefined entries)
  */
 export function createEngineRequests(
 	toolCalls: ToolCallRequest[],
 	itemIndex: number,
 	tools: Array<DynamicStructuredTool | Tool>,
+	options: { iteration?: number } = {},
 ): EngineRequest<RequestResponseMetadata>['actions'] {
+	const iteration = options.iteration ?? 0;
 	// For parallel tool calls, LangChain may only populate messageLog on the first action.
 	// Find a shared messageLog to use for all tool calls in this batch.
 	const sharedMessageLog = toolCalls.find(
@@ -226,7 +256,7 @@ export function createEngineRequests(
 		| undefined;
 
 	return toolCalls
-		.map((toolCall) => {
+		.map((toolCall, index) => {
 			// First try to get from metadata (for toolkit tools)
 			const foundTool = tools.find((tool) => tool.name === toolCall.tool);
 
@@ -259,7 +289,7 @@ export function createEngineRequests(
 				nodeName,
 				input,
 				type: NodeConnectionTypes.AiTool,
-				id: toolCall.toolCallId,
+				id: resolveToolCallId(toolCall, itemIndex, iteration, index),
 				metadata: {
 					itemIndex,
 					hitl: hitlMetadata,

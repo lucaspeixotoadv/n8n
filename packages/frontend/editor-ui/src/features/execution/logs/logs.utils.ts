@@ -1,6 +1,12 @@
 import type { INodeUi, LlmTokenUsageData, IWorkflowDb } from '@/Interface';
 import type { IExecutionResponse } from '@/features/execution/executions/executions.types';
-import { addTokenUsageData, emptyTokenUsageData, isChatNode } from '@/app/utils/aiUtils';
+import {
+	addTokenUsageData,
+	emptyTokenUsageData,
+	invocationToTokenUsageData,
+	isChatNode,
+	toTokenUsageData,
+} from '@/app/utils/aiUtils';
 import {
 	NodeConnectionTypes,
 	type IDataObject,
@@ -12,6 +18,7 @@ import {
 	type INode,
 	type ISourceData,
 	parseErrorMetadata,
+	readLlmInvocationUsage,
 	type RelatedExecution,
 	type INodeExecutionData,
 	type IWorkflowGroup,
@@ -43,14 +50,11 @@ import { TOOL_EXECUTOR_NODE_NAME } from '@n8n/constants';
 
 export function getConsumedTokens(task: Array<INodeExecutionData | null>): LlmTokenUsageData {
 	const tokenUsage = task.reduce<LlmTokenUsageData>((acc, curr) => {
-		const tokenUsageData = curr?.json?.tokenUsage ?? curr?.json?.tokenUsageEstimate;
+		const usage = readLlmInvocationUsage(curr);
 
-		if (!tokenUsageData) return acc;
+		if (!usage) return acc;
 
-		return addTokenUsageData(acc, {
-			...(tokenUsageData as Omit<LlmTokenUsageData, 'isEstimate'>),
-			isEstimate: !!curr?.json.tokenUsageEstimate,
-		});
+		return addTokenUsageData(acc, invocationToTokenUsageData(usage));
 	}, emptyTokenUsageData);
 
 	return tokenUsage;
@@ -176,15 +180,36 @@ export function getTotalConsumedTokens(...usage: LlmTokenUsageData[]): LlmTokenU
 	return usage.reduce(addTokenUsageData, emptyTokenUsageData);
 }
 
+/**
+ * Usage of a subtree. A run the engine published an aggregate for is taken as consolidated:
+ * its `total` already holds the node's own invocations and every sub-agent below it, so its
+ * descendants are not walked again. Sub-executions are outside that aggregate (they ran in
+ * another execution), so they are still collected from the tree when requested. Runs
+ * without a published aggregate (older executions) are summed from the tree as before.
+ */
 export function getSubtreeTotalConsumedTokens(
 	treeNode: LogEntry,
 	includeSubWorkflow: boolean,
 ): LlmTokenUsageData {
 	const executionId = treeNode.executionId;
 
+	function subExecutionUsage(currentNode: LogEntry): LlmTokenUsageData[] {
+		return currentNode.children.flatMap((child) =>
+			child.executionId === currentNode.executionId ? subExecutionUsage(child) : [calculate(child)],
+		);
+	}
+
 	function calculate(currentNode: LogEntry): LlmTokenUsageData {
 		if (!includeSubWorkflow && currentNode.executionId !== executionId) {
 			return emptyTokenUsageData;
+		}
+
+		const published = isNodeLog(currentNode) ? currentNode.runData?.metadata?.llmUsage : undefined;
+		if (published) {
+			return getTotalConsumedTokens(
+				toTokenUsageData(published.total),
+				...(includeSubWorkflow ? subExecutionUsage(currentNode) : []),
+			);
 		}
 
 		return getTotalConsumedTokens(

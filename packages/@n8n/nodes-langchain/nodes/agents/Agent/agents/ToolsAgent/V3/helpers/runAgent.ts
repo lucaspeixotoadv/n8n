@@ -46,6 +46,8 @@ export async function runAgent(
 	memoryHits?: { loads: number; saves: number },
 ): Promise<RunAgentResult> {
 	const { itemIndex, input, steps, tools, options } = itemContext;
+	// Iterations already completed in this turn; gives synthetic tool call ids a stable prefix.
+	const iteration = response?.metadata?.iterationCount ?? 0;
 
 	const invokeParams = {
 		// steps are passed to the ToolCallingAgent in the runnable sequence to keep track of tool calls
@@ -94,17 +96,19 @@ export async function runAgent(
 
 		// If result contains tool calls, build the request object like the normal flow
 		if (result.toolCalls && result.toolCalls.length > 0) {
-			const actions = createEngineRequests(result.toolCalls, itemIndex, tools);
+			const actions = createEngineRequests(result.toolCalls, itemIndex, tools, { iteration });
 
 			return {
 				actions,
 				metadata: buildResponseMetadata(response, itemIndex),
 			};
 		}
-		// Save conversation to memory including any tool call context
+		// Save conversation to memory including any tool call context.
+		// `steps` holds every tool call of this turn (earlier iterations arrive through
+		// `response.metadata.previousRequests`, the latest through `actionResponses`), and
+		// memory is written once per turn, so none of them is persisted yet.
 		if (memory && input && result?.output) {
-			const previousCount = response?.metadata?.previousRequests?.length;
-			await saveToMemory(input, result.output, memory, steps, previousCount);
+			await saveToMemory(input, result.output, memory, steps);
 			if (memoryHits) {
 				memoryHits.saves++;
 			}
@@ -131,10 +135,10 @@ export async function runAgent(
 		);
 
 		if ('returnValues' in modelResponse) {
-			// Save conversation to memory including any tool call context
+			// Save conversation to memory including any tool call context (see the streaming
+			// branch above for why every step of the turn is new to memory).
 			if (memory && input && modelResponse.returnValues.output) {
-				const previousCount = response?.metadata?.previousRequests?.length;
-				await saveToMemory(input, modelResponse.returnValues.output, memory, steps, previousCount);
+				await saveToMemory(input, modelResponse.returnValues.output, memory, steps);
 				if (memoryHits) {
 					memoryHits.saves++;
 				}
@@ -148,7 +152,7 @@ export async function runAgent(
 		}
 
 		// If response contains tool calls, we need to return this in the right format
-		const actions = createEngineRequests(modelResponse, itemIndex, tools);
+		const actions = createEngineRequests(modelResponse, itemIndex, tools, { iteration });
 
 		return {
 			actions,

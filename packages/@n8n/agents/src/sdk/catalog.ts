@@ -1,3 +1,8 @@
+import {
+	isPricingLookupFailure,
+	loadModelCatalog,
+	resolveModelPricing,
+} from '@n8n/ai-utilities/model-catalog';
 import { z } from 'zod';
 
 const MODELS_DEV_URL = 'https://models.dev/api.json';
@@ -280,17 +285,57 @@ export async function getCachedCatalog(): Promise<ProviderCatalog | undefined> {
 	return await catalogFetchPromise;
 }
 
+function toModelsDevProviderId(agentProviderId: string): string {
+	for (const [modelsDevId, agentId] of Object.entries(MODELS_DEV_PROVIDER_ALIASES)) {
+		if (agentId === agentProviderId) return modelsDevId;
+	}
+	return agentProviderId;
+}
+
+/**
+ * Cost from the models.dev snapshot n8n ships (`@n8n/ai-utilities/model-catalog`): the
+ * same source of truth the LLM nodes price their runs with, available without network
+ * access and stable for a given n8n version.
+ */
+async function getSnapshotModelCost(
+	provider: string,
+	modelName: string,
+): Promise<ModelCost | undefined> {
+	let snapshot;
+	try {
+		snapshot = await loadModelCatalog();
+	} catch {
+		return undefined;
+	}
+	const resolved = resolveModelPricing(snapshot, {
+		provider: toModelsDevProviderId(provider),
+		id: modelName,
+	});
+	if (isPricingLookupFailure(resolved)) return undefined;
+	const { pricing } = resolved;
+	return {
+		input: pricing.input,
+		output: pricing.output,
+		...(pricing.cacheRead !== undefined && { cacheRead: pricing.cacheRead }),
+		...(pricing.cacheWrite !== undefined && { cacheWrite: pricing.cacheWrite }),
+	};
+}
+
 /**
  * Look up cost info for a model by its full ID (e.g. 'anthropic/claude-sonnet-4-5').
- * Returns undefined if catalog is unavailable or model not found.
+ * The shipped snapshot is consulted first; the live models.dev catalog only fills in
+ * models the snapshot does not know. Returns undefined when neither has the model.
  * @internal
  */
 export async function getModelCost(modelId: string): Promise<ModelCost | undefined> {
-	const catalog = await getCachedCatalog();
-	if (!catalog) return undefined;
-
 	const [provider, ...rest] = modelId.split('/');
 	const modelName = rest.join('/');
+
+	const fromSnapshot = await getSnapshotModelCost(provider, modelName);
+	if (fromSnapshot) return fromSnapshot;
+
+	const catalog = await getCachedCatalog();
+	if (!catalog) return undefined;
 
 	return catalog[provider]?.models[modelName]?.cost;
 }

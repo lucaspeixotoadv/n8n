@@ -1069,4 +1069,68 @@ describe('createEngineRequests', () => {
 			expect(result[0].metadata.google?.thoughtSignature).toBe('actual_signature');
 		});
 	});
+
+	describe('Tool calls without a provider id', () => {
+		const tools = [
+			createMockTool('calculator', { sourceNodeName: 'Calculator' }),
+			createMockTool('search', { sourceNodeName: 'Search' }),
+		];
+
+		it('assigns a deterministic synthetic id when the provider reports none', () => {
+			const toolCalls: ToolCallRequest[] = [
+				{ tool: 'calculator', toolInput: { expression: '1+1' }, toolCallId: '' },
+			];
+
+			const result = createEngineRequests(toolCalls, 0, tools);
+
+			expect(result[0].id).toBe('n8n_call_0_0_0');
+		});
+
+		it('keeps two distinct id-less calls apart, even with identical input', () => {
+			const toolCalls: ToolCallRequest[] = [
+				{ tool: 'calculator', toolInput: { expression: '1+1' }, toolCallId: '' },
+				{ tool: 'calculator', toolInput: { expression: '1+1' }, toolCallId: '' },
+			];
+
+			const result = createEngineRequests(toolCalls, 0, tools);
+
+			expect(result).toHaveLength(2);
+			expect(result[0].id).not.toBe(result[1].id);
+		});
+
+		it('produces the same ids when the same request is created again', () => {
+			const toolCalls: ToolCallRequest[] = [
+				{ tool: 'calculator', toolInput: { expression: '1+1' }, toolCallId: '' },
+				{ tool: 'search', toolInput: { query: 'n8n' }, toolCallId: '' },
+			];
+
+			const first = createEngineRequests(toolCalls, 1, tools, { iteration: 3 }).map((a) => a.id);
+			const second = createEngineRequests(toolCalls, 1, tools, { iteration: 3 }).map((a) => a.id);
+
+			expect(first).toEqual(second);
+			expect(first).toEqual(['n8n_call_1_3_0', 'n8n_call_1_3_1']);
+		});
+
+		it('gives calls from different iterations of the same turn different ids', () => {
+			const toolCalls: ToolCallRequest[] = [
+				{ tool: 'calculator', toolInput: { expression: '1+1' }, toolCallId: '' },
+			];
+
+			const iteration0 = createEngineRequests(toolCalls, 0, tools, { iteration: 0 })[0].id;
+			const iteration1 = createEngineRequests(toolCalls, 0, tools, { iteration: 1 })[0].id;
+
+			expect(iteration0).not.toBe(iteration1);
+		});
+
+		it('keeps provider ids untouched and only fills in the missing ones', () => {
+			const toolCalls: ToolCallRequest[] = [
+				{ tool: 'calculator', toolInput: { expression: '1+1' }, toolCallId: 'call_abc' },
+				{ tool: 'search', toolInput: { query: 'n8n' }, toolCallId: '' },
+			];
+
+			const result = createEngineRequests(toolCalls, 0, tools, { iteration: 0 });
+
+			expect(result.map((a) => a.id)).toEqual(['call_abc', 'n8n_call_0_0_1']);
+		});
+	});
 });

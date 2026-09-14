@@ -12,6 +12,7 @@ import { isRedactedThinkingBlock, isThinkingBlock, type ToolCallData } from './t
  *
  * @param toolCallId - The tool call ID in various possible formats
  * @param toolName - The tool name, used for generating synthetic IDs
+ * @param position - Position of the step in its sequence, used for generating synthetic IDs
  * @returns A valid string tool_call_id
  *
  * @example
@@ -19,12 +20,13 @@ import { isRedactedThinkingBlock, isThinkingBlock, type ToolCallData } from './t
  * extractToolCallId('call-123', 'calculator') // Returns: 'call-123'
  * extractToolCallId({ id: 'call-456' }, 'search') // Returns: 'call-456'
  * extractToolCallId(['call-789'], 'weather') // Returns: 'call-789'
- * extractToolCallId(null, 'unknown') // Returns: 'synthetic_unknown_1234567890'
+ * extractToolCallId(null, 'unknown', 2) // Returns: 'synthetic_unknown_2'
  * ```
  */
 export function extractToolCallId(
 	toolCallId: IDataObject | GenericValue | GenericValue[] | IDataObject[],
 	toolName: string,
+	position = 0,
 ): string {
 	// Case 1: Already a string
 	if (typeof toolCallId === 'string' && toolCallId.length > 0) {
@@ -46,11 +48,12 @@ export function extractToolCallId(
 
 	// Case 3: Array - recursively extract from first element
 	if (Array.isArray(toolCallId) && toolCallId.length > 0) {
-		return extractToolCallId(toolCallId[0], toolName);
+		return extractToolCallId(toolCallId[0], toolName, position);
 	}
 
-	// Fallback: Generate synthetic ID
-	return `synthetic_${toolName}_${Date.now()}`;
+	// Fallback: a synthetic id derived from the step position, so that rebuilding the same
+	// sequence twice (e.g. after a resume) yields the same AIMessage/ToolMessage pairing.
+	return `synthetic_${toolName}_${position}`;
 }
 
 /**
@@ -128,7 +131,7 @@ export function buildMessagesFromSteps(steps: ToolCallData[]): BaseMessage[] {
 
 		// Use existing ID if available, otherwise extract from step data
 		const toolCallId =
-			existingToolCallId ?? extractToolCallId(step.action.toolCallId, step.action.tool);
+			existingToolCallId || extractToolCallId(step.action.toolCallId, step.action.tool, i);
 
 		// Parallel tool calls share one AIMessage on the first step (holding all
 		// tool_calls) and leave an empty messageLog on the continuation steps, which get
@@ -340,7 +343,10 @@ export async function loadMemory(
  * @param output - The agent's output/response
  * @param memory - The memory instance to save to
  * @param steps - Optional tool call data to save as proper message sequence
- * @param previousStepsCount - Number of steps from previous turns (to filter out duplicates)
+ * @param previousStepsCount - Number of leading steps that are already persisted in memory.
+ *   The Tools Agent writes memory once per turn, after the final answer, so every step of
+ *   the turn is new and the caller leaves this undefined. Only pass a count when the leading
+ *   steps really were written to memory earlier.
  *
  * @example
  * ```typescript
@@ -368,7 +374,7 @@ export async function saveToMemory(
 		return;
 	}
 
-	// Filter out previous steps to avoid duplicates (they're already in memory)
+	// Skip only the steps the caller says memory already holds
 	const newSteps = previousStepsCount ? steps.slice(previousStepsCount) : steps;
 
 	if (newSteps.length === 0) {
