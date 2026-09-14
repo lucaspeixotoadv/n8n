@@ -304,7 +304,13 @@ describe('N8nLlmTracing', () => {
 
 			expect(customMapper).toHaveBeenCalledWith(error);
 			expect(error.description).toBe('Mapped error description');
-			expect(executionFunctions.addOutputData).toHaveBeenCalledWith('ai_languageModel', 0, error);
+			expect(executionFunctions.addOutputData).toHaveBeenCalledWith(
+				'ai_languageModel',
+				0,
+				error,
+				undefined,
+				undefined,
+			);
 		});
 
 		it('should wrap non-NodeError in NodeOperationError', async () => {
@@ -320,6 +326,8 @@ describe('N8nLlmTracing', () => {
 				'ai_languageModel',
 				0,
 				expect.any(NodeOperationError),
+				undefined,
+				undefined,
 			);
 		});
 

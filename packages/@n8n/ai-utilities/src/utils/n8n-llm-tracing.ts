@@ -18,7 +18,7 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeError, NodeOperationError } from 'n8n-workflow';
 
-import { normalizeLlmResultUsage } from './llm-usage-normalizer';
+import { normalizeLlmResultUsage, readServedModelName } from './llm-usage-normalizer';
 import { logAiEvent } from './log-ai-event';
 import { redactHeaderValues } from './redact-headers';
 import { loadModelCatalog } from '../model-catalog/catalog';
@@ -46,7 +46,27 @@ type RunDetail = {
 	index: number;
 	messages: BaseMessage[] | string[] | string;
 	options: SerializedSecret | SerializedNotImplemented | SerializedFields;
+	/** Run of the parent sub-node this invocation belongs to, when the parent pinned one. */
+	sourceNodeRunIndex?: number;
 };
+
+/**
+ * A tracer that can be told which run of its parent sub-node an LLM invocation belongs to.
+ * A sub-node that sits between an agent and a model (a model selector) implements the
+ * same contract so nested selectors chain.
+ */
+export interface ParentRunIndexAware {
+	setParentRunIndexForRun(runId: string, runIndex: number): void;
+}
+
+export function isParentRunIndexAware(value: unknown): value is ParentRunIndexAware {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'setParentRunIndexForRun' in value &&
+		typeof value.setParentRunIndexForRun === 'function'
+	);
+}
 
 const TIKTOKEN_ESTIMATE_MODEL = 'gpt-4o';
 
@@ -123,6 +143,9 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 
 	#parentRunIndex?: number;
 
+	/** Parent run pinned per LangChain run id by the parent sub-node's own tracer. */
+	readonly #parentRunIndexByRun = new Map<string, number>();
+
 	/**
 	 * A map to associate LLM run IDs to run details.
 	 * Key: Unique identifier for each LLM run (run ID)
@@ -182,6 +205,7 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 		// some providers (e.g. Google Gemini) report token usage only on the
 		// generation message's usage_metadata, which the stripping removes.
 		const tokenUsage = this.options.tokensUsageParser(output);
+		const servedModel = readServedModelName(output);
 
 		output.generations = output.generations.map((gen) =>
 			gen.map((g) => pick(g, ['text', 'generationInfo'])),
@@ -206,7 +230,7 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 			response: { generations: output.generations },
 		};
 
-		const model = this.resolveModelIdentity(runDetails.options);
+		const model = this.resolveModelIdentity(runDetails.options, servedModel);
 
 		// If the LLM response contains actual tokens usage, otherwise fallback to the estimate
 		if (tokenUsage.promptTokens > 0 || tokenUsage.completionTokens > 0) {
@@ -246,15 +270,12 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 						return message;
 					});
 
-		const sourceNodeRunIndex =
-			this.#parentRunIndex !== undefined ? this.#parentRunIndex + runDetails.index : undefined;
-
 		this.executionFunctions.addOutputData(
 			this.connectionType,
 			runDetails.index,
 			[[{ json: { ...response } }]],
 			undefined,
-			sourceNodeRunIndex,
+			runDetails.sourceNodeRunIndex,
 		);
 
 		logAiEvent(this.executionFunctions, 'ai-llm-generated-output', {
@@ -266,10 +287,7 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 
 	async handleLLMStart(llm: Serialized, prompts: string[], runId: string) {
 		const estimatedTokens = await this.estimateTokensFromStringList(prompts);
-		const sourceNodeRunIndex =
-			this.#parentRunIndex !== undefined
-				? this.#parentRunIndex + this.executionFunctions.getNextRunIndex()
-				: undefined;
+		const sourceNodeRunIndex = this.resolveSourceNodeRunIndex(runId);
 
 		const options = redactHeaderValues(
 			llm.type === 'constructor' ? llm.kwargs : llm,
@@ -296,6 +314,7 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 			index,
 			options,
 			messages: prompts,
+			sourceNodeRunIndex,
 		};
 		this.promptTokensEstimate = estimatedTokens;
 	}
@@ -320,7 +339,13 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 				error.description = this.options.errorDescriptionMapper(error);
 			}
 
-			this.executionFunctions.addOutputData(this.connectionType, runDetails.index, error);
+			this.executionFunctions.addOutputData(
+				this.connectionType,
+				runDetails.index,
+				error,
+				undefined,
+				runDetails.sourceNodeRunIndex,
+			);
 		} else {
 			// If the error is not a NodeError, we wrap it in a NodeOperationError
 			this.executionFunctions.addOutputData(
@@ -329,6 +354,8 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 				new NodeOperationError(this.executionFunctions.getNode(), error as JsonObject, {
 					functionality: 'configuration-node',
 				}),
+				undefined,
+				runDetails.sourceNodeRunIndex,
 			);
 		}
 
@@ -340,16 +367,45 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 		});
 	}
 
-	// Used to associate subsequent runs with the correct parent run in subnodes of subnodes
+	/**
+	 * Base run index of the parent sub-node, for callers that cannot pin a run per
+	 * invocation. Superseded by {@link setParentRunIndexForRun} whenever a pin exists.
+	 * @deprecated Pin the parent run per invocation with `setParentRunIndexForRun`.
+	 */
 	setParentRunIndex(runIndex: number) {
 		this.#parentRunIndex = runIndex;
 	}
 
-	/** The model that priced this run: the explicit option, else the node type's provider and the id LangChain was given. */
-	private resolveModelIdentity(kwargs: unknown): Partial<ModelIdentity> {
+	/**
+	 * Pins the run of the parent sub-node that the invocation `runId` belongs to. The parent's
+	 * tracer sees the same LangChain run id and calls this as soon as it opened its own run,
+	 * before this tracer records the invocation, so the LLM run points to the exact parent
+	 * run whatever ran before.
+	 */
+	setParentRunIndexForRun(runId: string, runIndex: number) {
+		this.#parentRunIndexByRun.set(runId, runIndex);
+	}
+
+	private resolveSourceNodeRunIndex(runId: string): number | undefined {
+		const pinned = this.#parentRunIndexByRun.get(runId);
+		if (pinned !== undefined) {
+			this.#parentRunIndexByRun.delete(runId);
+			return pinned;
+		}
+		return this.#parentRunIndex !== undefined
+			? this.#parentRunIndex + this.executionFunctions.getNextRunIndex()
+			: undefined;
+	}
+
+	/**
+	 * The model that priced this run: the explicit option, else the node type's provider
+	 * with the model the provider reported serving, falling back to the id LangChain was
+	 * given (a deployment name on Azure, an alias elsewhere).
+	 */
+	private resolveModelIdentity(kwargs: unknown, servedModel?: string): Partial<ModelIdentity> {
 		if (this.options.model) return this.options.model;
 		const provider = MODEL_CATALOG_PROVIDER_BY_NODE_TYPE[this.executionFunctions.getNode().type];
-		const id = readModelId(kwargs);
+		const id = servedModel ?? readModelId(kwargs);
 		return { ...(provider && { provider }), ...(id && { id }) };
 	}
 

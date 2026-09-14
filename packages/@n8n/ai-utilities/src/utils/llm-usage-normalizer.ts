@@ -149,3 +149,24 @@ export function normalizeLlmResultUsage(result: LLMResult): NormalizedLlmUsage {
 
 	return { ...(counts ?? EMPTY), ...(providerCost !== undefined && { providerCost }) };
 }
+
+/**
+ * The model the provider reports having served, when the response says so
+ * (`response_metadata.model_name` for OpenAI-compatible APIs, `response_metadata.model`
+ * for Anthropic). It is more precise than the id the node requested: a deployment name
+ * (Azure) or an alias (`gpt-4o`) resolves to the concrete model that was billed.
+ */
+export function readServedModelName(result: LLMResult): string | undefined {
+	for (const generations of result.generations) {
+		for (const generation of generations) {
+			if (!isChatGeneration(generation)) continue;
+			const responseMetadata: unknown = generation.message.response_metadata;
+			if (!isRecord(responseMetadata)) continue;
+			for (const key of ['model_name', 'model']) {
+				const value = responseMetadata[key];
+				if (typeof value === 'string' && value.length > 0) return value;
+			}
+		}
+	}
+	return undefined;
+}

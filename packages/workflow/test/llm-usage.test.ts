@@ -3,7 +3,9 @@ import { NodeConnectionTypes } from '../src/interfaces';
 import {
 	aggregateLlmUsage,
 	emptyLlmUsageSummary,
+	llmUsageAggregateFromSubtree,
 	readLlmInvocationUsage,
+	summarizeExecutionLlmUsage,
 	type LlmInvocationCost,
 	type LlmTokenCounts,
 	type LlmUsageAggregate,
@@ -261,6 +263,31 @@ describe('aggregateLlmUsage', () => {
 		expect(total.cost.amount).toBeCloseTo(0.01);
 	});
 
+	it('does not count a main-flow successor as a sub-agent, even though it points to the run', () => {
+		const successor = aggregateLlmUsage(
+			{ 'Chain Model': [llmRun('Chain', 0, { promptTokens: 7, completionTokens: 0 })] },
+			'Chain',
+			0,
+		);
+		const runData: IRunData = {
+			Agent: [agentRun()],
+			Model: [llmRun('Agent', 0, { promptTokens: 100, completionTokens: 0, cost: 0.1 })],
+			// A chain that runs after the agent on the main flow, with its own published usage
+			Chain: [
+				{
+					...agentRun(),
+					source: [{ previousNode: 'Agent', previousNodeRun: 0 }],
+					metadata: { llmUsage: successor },
+				},
+			],
+		};
+
+		const agent = aggregateLlmUsage(runData, 'Agent', 0);
+
+		expect(agent.subagents.invocations).toBe(0);
+		expect(agent.total.tokens.totalTokens).toBe(100);
+	});
+
 	it('ignores an errored LLM run, which has no output to count', () => {
 		const errored: ITaskData = {
 			...baseTask(),
@@ -421,6 +448,49 @@ describe('aggregateLlmUsage', () => {
 
 			expect(agent.own.tokens.totalTokens).toBe(30);
 			expect(agent.subagents.invocations).toBe(0);
+		});
+	});
+});
+
+describe('summarizeExecutionLlmUsage', () => {
+	it('sums only the top-most published aggregates of an execution', () => {
+		const inner = aggregateLlmUsage(
+			{ 'Sub Model': [llmRun('Sub', 0, { promptTokens: 30, completionTokens: 0, cost: 0.03 })] },
+			'Sub',
+			0,
+		);
+		const runData: IRunData = {
+			Trigger: [agentRun()],
+			Agent: [{ ...agentRun(), source: [{ previousNode: 'Trigger', previousNodeRun: 0 }] }],
+			Model: [llmRun('Agent', 0, { promptTokens: 100, completionTokens: 0, cost: 0.1 })],
+			Sub: [toolRun('Agent', 0, inner)],
+			'Sub Model': [llmRun('Sub', 0, { promptTokens: 30, completionTokens: 0, cost: 0.03 })],
+			Chain: [{ ...agentRun(), source: [{ previousNode: 'Agent', previousNodeRun: 0 }] }],
+			'Chain Model': [llmRun('Chain', 0, { promptTokens: 7, completionTokens: 0, cost: 0.007 })],
+		};
+		runData.Agent[0].metadata = { llmUsage: aggregateLlmUsage(runData, 'Agent', 0) };
+		runData.Chain[0].metadata = { llmUsage: aggregateLlmUsage(runData, 'Chain', 0) };
+
+		const summary = summarizeExecutionLlmUsage(runData);
+
+		// Agent (100 + 30 through Sub) and Chain (7); Sub is inside Agent's aggregate
+		expect(summary.invocations).toBe(3);
+		expect(summary.tokens.totalTokens).toBe(137);
+		expect(summary.cost.amount).toBeCloseTo(0.137);
+		expect(summary.costComplete).toBe(true);
+	});
+
+	it('returns an empty summary for an execution without LLM usage', () => {
+		expect(summarizeExecutionLlmUsage({ A: [agentRun()] })).toEqual(emptyLlmUsageSummary());
+	});
+
+	it('wraps a sub-execution summary as an aggregate with no own usage', () => {
+		const subtree = { ...emptyLlmUsageSummary(), invocations: 2 };
+
+		expect(llmUsageAggregateFromSubtree(subtree)).toEqual({
+			own: emptyLlmUsageSummary(),
+			subagents: subtree,
+			total: subtree,
 		});
 	});
 });

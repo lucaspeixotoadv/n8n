@@ -652,6 +652,8 @@ describe('N8nLlmTracing', () => {
 				NodeConnectionTypes.AiLanguageModel,
 				0,
 				error,
+				undefined,
+				undefined,
 			);
 
 			expect(logAiEvent).toHaveBeenCalledWith(
@@ -682,6 +684,8 @@ describe('N8nLlmTracing', () => {
 				NodeConnectionTypes.AiLanguageModel,
 				0,
 				expect.any(NodeOperationError),
+				undefined,
+				undefined,
 			);
 		});
 
@@ -788,6 +792,55 @@ describe('N8nLlmTracing', () => {
 
 			expect(result).toBe(75);
 			expect(estimateTokensFromStringList).toHaveBeenCalledWith(list, 'gpt-4o');
+		});
+	});
+
+	describe('setParentRunIndexForRun', () => {
+		const llm: Serialized = { lc: 1, type: 'constructor', id: ['test'], kwargs: {} };
+
+		it('points the run to the parent run pinned for that invocation, whatever ran before', async () => {
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			// The model already ran twice under another parent run
+			mockExecutionFunctions.getNextRunIndex.mockReturnValue(2);
+			mockExecutionFunctions.addInputData.mockReturnValue({ index: 2 });
+			tracer.setParentRunIndexForRun('run-abc', 5);
+
+			await tracer.handleLLMStart(llm, ['prompt'], 'run-abc');
+			await tracer.handleLLMEnd(
+				{
+					generations: [[{ text: 'ok' }]],
+					llmOutput: { tokenUsage: { promptTokens: 1, completionTokens: 1 } },
+				},
+				'run-abc',
+			);
+
+			expect(mockExecutionFunctions.addInputData).toHaveBeenCalledWith(
+				NodeConnectionTypes.AiLanguageModel,
+				expect.any(Array),
+				5,
+			);
+			expect(mockExecutionFunctions.addOutputData).toHaveBeenCalledWith(
+				NodeConnectionTypes.AiLanguageModel,
+				2,
+				expect.any(Array),
+				undefined,
+				5,
+			);
+		});
+
+		it('consumes the pin, so a later unpinned invocation is not attributed to it', async () => {
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			tracer.setParentRunIndexForRun('run-1', 5);
+
+			await tracer.handleLLMStart(llm, ['a'], 'run-1');
+			await tracer.handleLLMStart(llm, ['b'], 'run-2');
+
+			expect(mockExecutionFunctions.addInputData).toHaveBeenNthCalledWith(
+				2,
+				NodeConnectionTypes.AiLanguageModel,
+				expect.any(Array),
+				undefined,
+			);
 		});
 	});
 
@@ -1191,6 +1244,48 @@ describe('N8nLlmTracing', () => {
 				source: 'provider',
 				model: { provider: 'openai', id: 'gpt-4o' },
 			});
+		});
+
+		it('prices the model the provider reports having served, not the requested deployment name', async () => {
+			mockExecutionFunctions.getNode.mockReturnValue({
+				...mockNode,
+				type: '@n8n/n8n-nodes-langchain.lmChatAzureOpenAi',
+			});
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			tracer.runsMap['run-1'] = {
+				index: 0,
+				messages: ['Test'],
+				options: { model: 'my-prod-deployment' },
+			};
+			const { AIMessage } = await import('@langchain/core/messages');
+
+			await tracer.handleLLMEnd(
+				{
+					generations: [
+						[
+							{
+								text: 'Response',
+								message: new AIMessage({
+									content: 'Response',
+									response_metadata: { model_name: 'gpt-4o-2024-08-06' },
+									usage_metadata: {
+										input_tokens: 1_000_000,
+										output_tokens: 0,
+										total_tokens: 1_000_000,
+									},
+								}),
+							},
+						],
+					],
+				},
+				'run-1',
+			);
+
+			expect(runOutput().cost).toMatchObject({
+				source: 'catalog',
+				model: { provider: 'azure', id: 'gpt-4o-2024-08-06' },
+			});
+			expect(runOutput().cost.amount).toBeCloseTo(2.5);
 		});
 
 		it('never prices an estimate', async () => {

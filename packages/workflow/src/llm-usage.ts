@@ -208,13 +208,23 @@ export function summarizeLlmRun(task: ITaskData): LlmUsageSummary {
 	return summary;
 }
 
+/**
+ * Whether the run belongs to a sub-node (a model, a tool, a sub-agent) rather than to a node
+ * of the main flow. Sub-node runs store their output under their connection type; only a
+ * main-flow run has a `main` output. A main-flow successor also points to the run that
+ * produced its input through `source`, so this is what keeps it out of that run's subtree.
+ */
+function isSubNodeRun(task: ITaskData): boolean {
+	return task.data !== undefined && task.data[NodeConnectionTypes.Main] === undefined;
+}
+
 function isChildRunOf(task: ITaskData, nodeName: string, runIndex: number): boolean {
 	const source = task.source?.[0];
 	return (
 		source?.previousNode === nodeName &&
 		(source.previousNodeRun ?? 0) === runIndex &&
 		// Every LLM run is stored with output data; an errored run has none to count.
-		task.data !== undefined
+		isSubNodeRun(task)
 	);
 }
 
@@ -251,4 +261,36 @@ export function aggregateLlmUsage(
 	}
 
 	return { own, subagents, total: addLlmUsageSummaries(own, subagents) };
+}
+
+/**
+ * LLM usage of a whole execution, from the aggregates the engine published on its runs.
+ * A run whose parent run (through `source`) published an aggregate is already inside that
+ * aggregate, so only the top-most aggregated runs are summed and nothing is counted twice.
+ * A parent execution uses this to fold a sub-workflow's usage into the run that started it.
+ */
+export function summarizeExecutionLlmUsage(runData: IRunData): LlmUsageSummary {
+	let summary = emptyLlmUsageSummary();
+
+	for (const nodeName of Object.keys(runData)) {
+		for (const task of runData[nodeName] ?? []) {
+			const published = task?.metadata?.llmUsage;
+			if (!published) continue;
+
+			const source = task.source?.[0];
+			const parentRun = source
+				? runData[source.previousNode]?.[source.previousNodeRun ?? 0]
+				: undefined;
+			if (isSubNodeRun(task) && parentRun?.metadata?.llmUsage) continue;
+
+			summary = addLlmUsageSummaries(summary, published.total);
+		}
+	}
+
+	return summary;
+}
+
+/** The aggregate a run publishes for usage that happened entirely below it (a sub-workflow). */
+export function llmUsageAggregateFromSubtree(subtree: LlmUsageSummary): LlmUsageAggregate {
+	return { own: emptyLlmUsageSummary(), subagents: subtree, total: subtree };
 }
