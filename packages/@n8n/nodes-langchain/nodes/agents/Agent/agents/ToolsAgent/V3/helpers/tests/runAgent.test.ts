@@ -1,4 +1,5 @@
 import type { AgentRunnableSequence } from '@langchain/classic/agents';
+import type { BaseChatMemory } from '@langchain/classic/memory';
 import type { Tool } from '@langchain/classic/tools';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import type { IExecuteFunctions, INode, EngineResponse } from 'n8n-workflow';
@@ -586,5 +587,133 @@ describe('runAgent - intermediate steps', () => {
 
 		expect(result).toHaveProperty('intermediateSteps');
 		expect((result as any).intermediateSteps).toEqual([]);
+	});
+});
+
+describe('runAgent - memory persistence', () => {
+	const stepFor = (id: string): ToolCallData => ({
+		action: {
+			tool: 'TestTool',
+			toolInput: { input: id },
+			log: `Calling TestTool ${id}`,
+			messageLog: [],
+			toolCallId: id,
+			type: 'tool_call',
+		},
+		observation: `result ${id}`,
+	});
+
+	const response: EngineResponse<RequestResponseMetadata> = {
+		actionResponses: [],
+		metadata: { previousRequests: [stepFor('call-a')], itemIndex: 0, iterationCount: 2 },
+	};
+
+	it('persists every tool call of the turn, including those from earlier iterations (non-streaming)', async () => {
+		const mockInvoke = vi.fn().mockResolvedValue({ returnValues: { output: 'Final answer' } });
+		const mockExecutor = mock<AgentRunnableSequence>({
+			withConfig: vi.fn().mockReturnValue({ invoke: mockInvoke }),
+		});
+		const memory = mock<BaseChatMemory>();
+		// buildSteps output: the earlier iteration's step plus the latest one
+		const steps = [stepFor('call-a'), stepFor('call-b')];
+		const itemContext: ItemContext = {
+			itemIndex: 0,
+			input: 'Do A then B',
+			steps,
+			tools: [],
+			prompt: mock(),
+			options: { maxIterations: 10, returnIntermediateSteps: false },
+			outputParser: undefined,
+		};
+		vi.spyOn(agentExecution, 'loadMemory').mockResolvedValue([]);
+		vi.spyOn(agentExecution, 'saveToMemory').mockResolvedValue();
+		mockContext.getExecutionCancelSignal.mockReturnValue(new AbortController().signal);
+
+		await runAgent(mockContext, mockExecutor, itemContext, mock<BaseChatModel>(), memory, response);
+
+		expect(agentExecution.saveToMemory).toHaveBeenCalledTimes(1);
+		expect(agentExecution.saveToMemory).toHaveBeenCalledWith(
+			'Do A then B',
+			'Final answer',
+			memory,
+			steps,
+		);
+	});
+
+	it('persists every tool call of the turn (streaming)', async () => {
+		const mockStreamEvents = vi.fn().mockReturnValue({});
+		const mockExecutor = mock<AgentRunnableSequence>({
+			withConfig: vi.fn().mockReturnValue({ streamEvents: mockStreamEvents }),
+		});
+		const memory = mock<BaseChatMemory>();
+		const steps = [stepFor('call-a'), stepFor('call-b')];
+		const itemContext: ItemContext = {
+			itemIndex: 0,
+			input: 'Do A then B',
+			steps,
+			tools: [],
+			prompt: mock(),
+			options: { maxIterations: 10, returnIntermediateSteps: false, enableStreaming: true },
+			outputParser: undefined,
+		};
+		const streamingContext = mock<IExecuteFunctions>({
+			getNode: vi.fn().mockReturnValue(mockNode),
+			isStreaming: vi.fn().mockReturnValue(true),
+			getExecutionCancelSignal: vi.fn().mockReturnValue(new AbortController().signal),
+		});
+		mockNode.typeVersion = 2.1;
+		vi.spyOn(agentExecution, 'loadMemory').mockResolvedValue([]);
+		vi.spyOn(agentExecution, 'processEventStream').mockResolvedValue({ output: 'Final answer' });
+		vi.spyOn(agentExecution, 'saveToMemory').mockResolvedValue();
+
+		await runAgent(
+			streamingContext,
+			mockExecutor,
+			itemContext,
+			mock<BaseChatModel>(),
+			memory,
+			response,
+		);
+
+		expect(agentExecution.saveToMemory).toHaveBeenCalledWith(
+			'Do A then B',
+			'Final answer',
+			memory,
+			steps,
+		);
+	});
+
+	it('passes the completed iteration count to createEngineRequests for synthetic tool call ids', async () => {
+		const toolCalls = [{ tool: 'TestTool', toolInput: {}, toolCallId: '' }];
+		const mockInvoke = vi.fn().mockResolvedValue(toolCalls);
+		const mockExecutor = mock<AgentRunnableSequence>({
+			withConfig: vi.fn().mockReturnValue({ invoke: mockInvoke }),
+		});
+		const itemContext: ItemContext = {
+			itemIndex: 0,
+			input: 'test',
+			steps: [],
+			tools: [],
+			prompt: mock(),
+			options: { maxIterations: 10, returnIntermediateSteps: false },
+			outputParser: undefined,
+		};
+		vi.spyOn(agentExecution, 'loadMemory').mockResolvedValue([]);
+		vi.spyOn(agentExecution, 'createEngineRequests').mockReturnValue([]);
+		vi.spyOn(agentExecution, 'buildSteps').mockReturnValue([]);
+		mockContext.getExecutionCancelSignal.mockReturnValue(new AbortController().signal);
+
+		await runAgent(
+			mockContext,
+			mockExecutor,
+			itemContext,
+			mock<BaseChatModel>(),
+			undefined,
+			response,
+		);
+
+		expect(agentExecution.createEngineRequests).toHaveBeenCalledWith(toolCalls, 0, [], {
+			iteration: 2,
+		});
 	});
 });

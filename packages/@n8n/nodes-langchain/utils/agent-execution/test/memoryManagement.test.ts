@@ -1,5 +1,6 @@
 import type { BaseChatMemory } from '@langchain/classic/memory';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import type { BaseMessage } from '@langchain/core/messages';
 import {
 	HumanMessage,
 	AIMessage,
@@ -432,8 +433,6 @@ describe('memoryManagement', () => {
 
 	describe('extractToolCallId', () => {
 		beforeEach(() => {
-			// Mock Date.now() to return consistent values for synthetic IDs
-			vi.spyOn(Date, 'now').mockReturnValue(1234567890);
 			vi.spyOn(console, 'log').mockImplementation(() => {});
 		});
 
@@ -468,27 +467,33 @@ describe('memoryManagement', () => {
 
 		it('should generate synthetic ID for null', () => {
 			const result = extractToolCallId(null, 'unknown');
-			expect(result).toBe('synthetic_unknown_1234567890');
+			expect(result).toBe('synthetic_unknown_0');
 		});
 
 		it('should generate synthetic ID for undefined', () => {
 			const result = extractToolCallId(undefined, 'test');
-			expect(result).toBe('synthetic_test_1234567890');
+			expect(result).toBe('synthetic_test_0');
 		});
 
 		it('should generate synthetic ID for empty string', () => {
 			const result = extractToolCallId('', 'tool');
-			expect(result).toBe('synthetic_tool_1234567890');
+			expect(result).toBe('synthetic_tool_0');
 		});
 
 		it('should generate synthetic ID for object without id property', () => {
 			const result = extractToolCallId({ other: 'value' }, 'tool');
-			expect(result).toBe('synthetic_tool_1234567890');
+			expect(result).toBe('synthetic_tool_0');
 		});
 
 		it('should generate synthetic ID for empty array', () => {
 			const result = extractToolCallId([], 'tool');
-			expect(result).toBe('synthetic_tool_1234567890');
+			expect(result).toBe('synthetic_tool_0');
+		});
+
+		it('derives the synthetic ID from the step position, so it is stable across rebuilds', () => {
+			expect(extractToolCallId('', 'tool', 3)).toBe('synthetic_tool_3');
+			expect(extractToolCallId('', 'tool', 3)).toBe('synthetic_tool_3');
+			expect(extractToolCallId('', 'tool', 4)).not.toBe(extractToolCallId('', 'tool', 3));
 		});
 	});
 
@@ -809,6 +814,84 @@ describe('memoryManagement', () => {
 			expect(savedMessages[2]).toBeInstanceOf(ToolMessage);
 			expect(savedMessages[3]).toBeInstanceOf(AIMessage);
 			expect(savedMessages[3].content).toBe('The answer is 4');
+		});
+
+		it('persists every tool call of a multi-step turn (Tool A, then Tool B, then the answer)', async () => {
+			const stepFor = (id: string, tool: string, observation: string): ToolCallData => ({
+				action: {
+					tool,
+					toolInput: { q: tool },
+					log: `Calling ${tool}`,
+					messageLog: [
+						new AIMessage({
+							content: '',
+							tool_calls: [{ id, name: tool, args: { q: tool }, type: 'tool_call' }],
+						}),
+					],
+					toolCallId: id,
+					type: 'tool_call',
+				},
+				observation,
+			});
+			// Tool A ran in an earlier iteration (it arrives through previousRequests), Tool B in
+			// the latest one; the turn is saved once, after the final answer.
+			const steps = [
+				stepFor('call-a', 'toolA', 'result A'),
+				stepFor('call-b', 'toolB', 'result B'),
+			];
+
+			await saveToMemory('Do A then B', 'Both done', mockMemory, steps);
+
+			const savedMessages = mockChatHistory.addMessages.mock.calls[0][0] as BaseMessage[];
+			expect(savedMessages.map((m) => m.constructor.name)).toEqual([
+				'HumanMessage',
+				'AIMessage',
+				'ToolMessage',
+				'AIMessage',
+				'ToolMessage',
+				'AIMessage',
+			]);
+			expect((savedMessages[1] as AIMessage).tool_calls?.[0].id).toBe('call-a');
+			expect((savedMessages[2] as ToolMessage).tool_call_id).toBe('call-a');
+			expect((savedMessages[3] as AIMessage).tool_calls?.[0].id).toBe('call-b');
+			expect((savedMessages[4] as ToolMessage).tool_call_id).toBe('call-b');
+			expect(savedMessages[5].content).toBe('Both done');
+			expect(mockMemory.saveContext).not.toHaveBeenCalled();
+		});
+
+		it('keeps distinct tool calls apart when neither the message nor the step carries an id', async () => {
+			const stepWithoutId = (tool: string): ToolCallData => ({
+				action: {
+					tool,
+					toolInput: { q: tool },
+					log: `Calling ${tool}`,
+					messageLog: [
+						new AIMessage({
+							content: '',
+							tool_calls: [{ id: '', name: tool, args: { q: tool }, type: 'tool_call' }],
+						}),
+					],
+					toolCallId: '',
+					type: 'tool_call',
+				},
+				observation: `${tool} result`,
+			});
+
+			await saveToMemory('Go', 'Done', mockMemory, [
+				stepWithoutId('toolA'),
+				stepWithoutId('toolB'),
+			]);
+
+			const savedMessages = mockChatHistory.addMessages.mock.calls[0][0] as BaseMessage[];
+			const pairs: Array<[AIMessage, ToolMessage]> = [
+				[savedMessages[1] as AIMessage, savedMessages[2] as ToolMessage],
+				[savedMessages[3] as AIMessage, savedMessages[4] as ToolMessage],
+			];
+			for (const [ai, tool] of pairs) {
+				expect(ai.tool_calls?.[0].id).toBe(tool.tool_call_id);
+				expect(tool.tool_call_id).not.toBe('');
+			}
+			expect(pairs[0][1].tool_call_id).not.toBe(pairs[1][1].tool_call_id);
 		});
 
 		it('should save parallel tool calls as a single AI tool-call message (no spurious AIMessage)', async () => {

@@ -55,7 +55,9 @@ export async function processEventStream(
 							toolCalls.push({
 								tool: toolCall.name,
 								toolInput: toolCall.args,
-								toolCallId: toolCall.id || 'unknown',
+								// Providers without call ids leave this empty; createEngineRequests assigns a
+								// deterministic synthetic id so distinct calls never share an identity.
+								toolCallId: toolCall.id ?? '',
 								type: toolCall.type || 'tool_call',
 								log:
 									output.text ||
