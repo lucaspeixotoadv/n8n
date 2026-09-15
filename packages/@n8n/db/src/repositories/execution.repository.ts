@@ -70,6 +70,19 @@ export interface UpdateExecutionConditions {
 	requireStatus?: ExecutionStatus;
 	requireNotFinished?: boolean;
 	requireNotCanceled?: boolean;
+	/**
+	 * Keep a cancellation the user already requested, without rejecting the write.
+	 *
+	 * The engine's final write is the only complete account of what a run did, so it must
+	 * always land — including when the run was cancelled, where it is the *only* account.
+	 * But it must not report `success` over a status the user set. This resolves the two:
+	 * the run data is written either way, and the status columns are dropped when the row
+	 * is already `canceled`.
+	 *
+	 * Prefer this over {@link requireNotCanceled}, which protects the status by discarding
+	 * the data with it.
+	 */
+	preserveCancellation?: boolean;
 }
 
 export interface IGetExecutionsQueryFilter {

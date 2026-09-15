@@ -608,10 +608,13 @@ describe('ExecutionService', () => {
 					expect.any(ManualExecutionCancelledError),
 				);
 				expect(waitTracker.stopExecution).not.toHaveBeenCalled();
-				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
-					execution.id,
-					execution,
-				);
+				// Only status columns: the engine owns the run data, and writing back the copy
+				// read here would overwrite its account of the run with a stale one.
+				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(execution.id, {
+					status: 'canceled',
+					stoppedAt: expect.any(Date),
+					waitTill: null,
+				});
 			});
 
 			it('should stop a `waiting` execution in regular mode', async () => {
@@ -645,10 +648,13 @@ describe('ExecutionService', () => {
 					expect.any(ManualExecutionCancelledError),
 				);
 				expect(waitTracker.stopExecution).toHaveBeenCalledWith(execution.id);
-				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
-					execution.id,
-					execution,
-				);
+				// Only status columns: the engine owns the run data, and writing back the copy
+				// read here would overwrite its account of the run with a stale one.
+				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(execution.id, {
+					status: 'canceled',
+					stoppedAt: expect.any(Date),
+					waitTill: null,
+				});
 			});
 
 			it('should stop a concurrency-controlled `new` execution in regular mode', async () => {
@@ -720,10 +726,11 @@ describe('ExecutionService', () => {
 						execution.id,
 						expect.any(ManualExecutionCancelledError),
 					);
-					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
-						execution.id,
-						execution,
-					);
+					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(execution.id, {
+						status: 'canceled',
+						stoppedAt: expect.any(Date),
+						waitTill: null,
+					});
 
 					expect(concurrencyControl.remove).not.toHaveBeenCalled();
 					expect(waitTracker.stopExecution).not.toHaveBeenCalled();
@@ -822,10 +829,11 @@ describe('ExecutionService', () => {
 					expect(executionStopService.requestStop).toHaveBeenCalledWith(execution.id);
 					expect(activeExecutions.stopExecution).not.toHaveBeenCalled();
 					// The canceled status is still persisted by the main process.
-					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
-						execution.id,
-						execution,
-					);
+					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(execution.id, {
+						status: 'canceled',
+						stoppedAt: expect.any(Date),
+						waitTill: null,
+					});
 				});
 			});
 		});

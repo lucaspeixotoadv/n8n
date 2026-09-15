@@ -118,6 +118,9 @@ export class WorkflowExecute {
 	private status: ExecutionStatus = 'new';
 
 	private readonly abortController = new AbortController();
+
+	/** The eager save started when the run was cancelled, awaited before it settles. */
+	private cancellationSave?: Promise<void>;
 	timedOut: boolean = false;
 
 	constructor(
@@ -1604,7 +1607,16 @@ export class WorkflowExecute {
 			this.updateTaskStatusesToCancelled();
 			this.abortController.abort();
 			const fullRunData = this.getFullRunData(startedAt);
-			void hooks.runHook('workflowExecuteAfter', [fullRunData]);
+			// Record why the run ended here rather than leaving it to whoever requested the
+			// cancellation: this hook carries the only complete account of what the run did,
+			// so the reason has to travel with it instead of arriving in a second write that
+			// would have to overwrite the same field.
+			fullRunData.data.resultData.error ??= this.buildCancellationError();
+			// The loop may be parked on a node that never settles, so the save cannot wait for
+			// it. Keep the promise instead: `processSuccessExecution` awaits it before the
+			// execution is reported as settled, which is what makes a shutdown drain wait for
+			// the write rather than race it.
+			this.cancellationSave = hooks.runHook('workflowExecuteAfter', [fullRunData]);
 		});
 	}
 
@@ -2921,8 +2933,12 @@ export class WorkflowExecute {
 			fullRunData.finished = true;
 		}
 
-		// Prevent from running the hook if the error is an abort error as it was already handled
-		if (!this.isCancelled) {
+		// A cancelled run already ran the hook eagerly, from `setupCancellation`. Await that
+		// save instead of starting a second one, so the run is only reported as settled once
+		// what it did is on disk.
+		if (this.isCancelled) {
+			await this.cancellationSave;
+		} else {
 			await this.additionalData.hooks?.runHook('workflowExecuteAfter', [
 				fullRunData,
 				newStaticData,
@@ -3120,6 +3136,16 @@ export class WorkflowExecute {
 		}
 
 		return nodeSuccessData ?? null;
+	}
+
+	/** Why a cancelled run stopped, in the same shape a node error is recorded in. */
+	private buildCancellationError() {
+		const executionId = this.additionalData.executionId ?? 'unknown';
+		const error = this.timedOut
+			? new TimeoutExecutionCancelledError(executionId)
+			: new ManualExecutionCancelledError(executionId);
+
+		return { ...error, message: error.message, stack: error.stack };
 	}
 
 	private updateTaskStatusesToCancelled(): void {

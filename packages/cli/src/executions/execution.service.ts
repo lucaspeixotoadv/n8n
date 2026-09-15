@@ -39,7 +39,6 @@ import {
 	UserError,
 	Workflow,
 	WorkflowOperationError,
-	createEmptyRunExecutionData,
 	createErrorExecutionData,
 } from 'n8n-workflow';
 
@@ -719,20 +718,28 @@ export class ExecutionService {
 		return await this.stopDuringRun(execution);
 	}
 
+	/**
+	 * Marks a running execution as cancelled, without touching what it produced.
+	 *
+	 * Only the engine writes run data: it is the only party that knows what actually ran,
+	 * and the copy read here is as old as the last save. Writing it back would overwrite
+	 * the engine's own account of the run with a stale one — for a run that never saved
+	 * progress, with an empty one, losing even the trigger.
+	 *
+	 * The engine records the cancellation error on its final save, so ordering between the
+	 * two writes does not matter: this one only moves status columns, and the engine's save
+	 * preserves a cancellation it finds already set.
+	 */
 	private async stopDuringRun(execution: IExecutionResponse) {
-		const error = new ManualExecutionCancelledError(execution.id);
-
-		execution.data = execution.data ?? createEmptyRunExecutionData();
-		execution.data.resultData.error = {
-			...error,
-			message: error.message,
-			stack: error.stack,
-		};
 		execution.stoppedAt = new Date();
 		execution.waitTill = null;
 		execution.status = 'canceled';
 
-		await this.executionPersistence.updateExistingExecution(execution.id, execution);
+		await this.executionPersistence.updateExistingExecution(execution.id, {
+			stoppedAt: execution.stoppedAt,
+			waitTill: execution.waitTill,
+			status: execution.status,
+		});
 
 		return execution;
 	}
