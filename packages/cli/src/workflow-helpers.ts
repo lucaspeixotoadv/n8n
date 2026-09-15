@@ -276,6 +276,7 @@ export function removeDefaultValues(
 		'saveDataSuccessExecution',
 		'saveManualExecutions',
 		'saveExecutionProgress',
+		'liveExecutionProgress',
 	] as const;
 
 	for (const key of keysAllowingDefault) {

@@ -119,6 +119,7 @@ const redactionToggleOptions = ref<Array<{ key: string; value: string }>>([
 const saveDataErrorExecutionOptions = ref<Array<{ key: string; value: string }>>([]);
 const saveDataSuccessExecutionOptions = ref<Array<{ key: string; value: string }>>([]);
 const saveExecutionProgressOptions = ref<Array<{ key: string | boolean; value: string }>>([]);
+const liveExecutionProgressOptions = ref<Array<{ key: string | boolean; value: string }>>([]);
 const saveManualOptions = ref<Array<{ key: string | boolean; value: string }>>([]);
 const executionLogicAllOptions = ref<Array<{ key: string; value: string; description: string }>>([
 	{
@@ -192,6 +193,7 @@ const helpTexts = computed(() => ({
 	saveDataErrorExecution: i18n.baseText('workflowSettings.helpTexts.saveDataErrorExecution'),
 	saveDataSuccessExecution: i18n.baseText('workflowSettings.helpTexts.saveDataSuccessExecution'),
 	saveExecutionProgress: i18n.baseText('workflowSettings.helpTexts.saveExecutionProgress'),
+	liveExecutionProgress: i18n.baseText('workflowSettings.helpTexts.liveExecutionProgress'),
 	saveManualExecutions: i18n.baseText('workflowSettings.helpTexts.saveManualExecutions'),
 	executionTimeoutToggle: i18n.baseText('workflowSettings.helpTexts.executionTimeoutToggle'),
 	executionTimeout: i18n.baseText('workflowSettings.helpTexts.executionTimeout'),
@@ -206,6 +208,7 @@ const defaultValues = ref({
 	saveDataErrorExecution: 'all',
 	saveDataSuccessExecution: 'all',
 	saveExecutionProgress: false,
+	liveExecutionProgress: false,
 	saveManualExecutions: false,
 	workflowCallerPolicy: 'workflowsFromSameOwner',
 	availableInMCP: false,
@@ -550,6 +553,29 @@ const loadSaveExecutionProgressOptions = async () => {
 	];
 };
 
+const loadLiveExecutionProgressOptions = async () => {
+	liveExecutionProgressOptions.value = [
+		{
+			key: 'DEFAULT',
+			value: i18n.baseText('workflowSettings.liveExecutionProgressOptions.defaultTrack', {
+				interpolate: {
+					defaultValue: defaultValues.value.liveExecutionProgress
+						? i18n.baseText('workflowSettings.liveExecutionProgressOptions.track')
+						: i18n.baseText('workflowSettings.liveExecutionProgressOptions.doNotTrack'),
+				},
+			}),
+		},
+		{
+			key: true,
+			value: i18n.baseText('workflowSettings.liveExecutionProgressOptions.track'),
+		},
+		{
+			key: false,
+			value: i18n.baseText('workflowSettings.liveExecutionProgressOptions.doNotTrack'),
+		},
+	];
+};
+
 const loadSaveManualOptions = async () => {
 	saveManualOptions.value = [
 		{
@@ -863,6 +889,7 @@ onMounted(async () => {
 	defaultValues.value.saveDataSuccessExecution = settingsStore.saveDataSuccessExecution;
 	defaultValues.value.saveManualExecutions = settingsStore.saveManualExecutions;
 	defaultValues.value.saveExecutionProgress = settingsStore.saveDataProgressExecution;
+	defaultValues.value.liveExecutionProgress = settingsStore.liveExecutionProgress;
 	defaultValues.value.timezone = rootStore.timezone;
 	defaultValues.value.workflowCallerPolicy = settingsStore.workflowCallerPolicyDefaultOption;
 
@@ -876,6 +903,7 @@ onMounted(async () => {
 			loadSaveDataErrorExecutionOptions(),
 			loadSaveDataSuccessExecutionOptions(),
 			loadSaveExecutionProgressOptions(),
+			loadLiveExecutionProgressOptions(),
 			loadSaveManualOptions(),
 			loadTimezones(),
 			loadWorkflowCallerPolicyOptions(),
@@ -917,6 +945,9 @@ onMounted(async () => {
 	}
 	if (workflowSettingsData.saveExecutionProgress === undefined) {
 		workflowSettingsData.saveExecutionProgress = 'DEFAULT';
+	}
+	if (workflowSettingsData.liveExecutionProgress === undefined) {
+		workflowSettingsData.liveExecutionProgress = 'DEFAULT';
 	}
 	if (workflowSettingsData.saveManualExecutions === undefined) {
 		workflowSettingsData.saveManualExecutions = 'DEFAULT';
@@ -1361,6 +1392,35 @@ onBeforeUnmount(() => {
 						>
 							<N8nOption
 								v-for="option of saveExecutionProgressOptions"
+								:key="`${option.key}`"
+								:label="option.value"
+								:value="option.key"
+							>
+							</N8nOption>
+						</N8nSelect>
+					</ElCol>
+				</ElRow>
+				<ElRow>
+					<ElCol :span="10" :class="$style['setting-name']">
+						{{ i18n.baseText('workflowSettings.liveExecutionProgress') }}
+						<N8nTooltip placement="top">
+							<template #content>
+								<div v-text="helpTexts.liveExecutionProgress"></div>
+							</template>
+							<N8nIcon icon="circle-help" />
+						</N8nTooltip>
+					</ElCol>
+					<ElCol :span="14" class="ignore-key-press-canvas">
+						<N8nSelect
+							v-model="workflowSettings.liveExecutionProgress"
+							:placeholder="i18n.baseText('workflowSettings.selectOption')"
+							filterable
+							:disabled="readOnlyEnv || !workflowPermissions.update"
+							:limit-popper-width="true"
+							data-test-id="workflow-settings-live-execution-progress"
+						>
+							<N8nOption
+								v-for="option of liveExecutionProgressOptions"
 								:key="`${option.key}`"
 								:label="option.value"
 								:value="option.key"
