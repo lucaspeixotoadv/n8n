@@ -292,6 +292,119 @@ export const responseBinaryPropertyNameProperty: INodeProperties = {
 	description: 'Name of the binary property to return',
 };
 
+/**
+ * Pre-authentication request gates, shared by every node that serves a public endpoint.
+ * The decision behind them lives in `checkRequestGates`; each node keeps its own rejection
+ * response, because the status code, realm and message differ by endpoint.
+ */
+export const ignoreBotsOption: INodeProperties = {
+	displayName: 'Ignore Bots',
+	name: 'ignoreBots',
+	type: 'boolean',
+	default: false,
+	description: 'Whether to ignore requests from bots like link previewers and web crawlers',
+};
+
+/** @see ignoreBotsOption */
+export const onlyRunIfOption: INodeProperties = {
+	displayName: 'Only Run If',
+	name: 'onlyRunIf',
+	type: 'string',
+	default: '',
+	placeholder: "{{ $json.body.campaign_id === 'user-research-invite' }}",
+	// eslint-disable-next-line n8n-nodes-base/node-param-description-miscased-json
+	description:
+		'Expression evaluated against the incoming request. The workflow will run only if the expression returns true. <code>$json</code> exposes the request as <code>{ body, headers, params, query }</code>. Requests that do not match receive a 200 response, without creating an execution. If the expression fails to evaluate, the request is allowed through and the error is logged.',
+};
+
+/** @see ignoreBotsOption */
+export const ipWhitelistOption: INodeProperties = {
+	displayName: 'IP(s) Allowlist',
+	name: 'ipWhitelist',
+	type: 'string',
+	placeholder: 'e.g. 127.0.0.1, 192.168.1.0/24',
+	default: '',
+	description:
+		'Comma-separated list of allowed IP addresses or CIDR ranges. Leave empty to allow all IPs.',
+};
+
+/**
+ * The response fields of a webhook that answers as soon as it receives the request.
+ *
+ * Declared apart from {@link optionsProperty} so a node that serves an endpoint without
+ * running a workflow — the Wait for Callback tool — configures its response with the same
+ * parameters, read by the same `getResponseData` / `WebhookResponseHeaders` code, instead
+ * of growing a second set that drifts.
+ */
+export const noResponseBodyOption: INodeProperties = {
+	displayName: 'No Response Body',
+	name: 'noResponseBody',
+	type: 'boolean',
+	default: false,
+	description: 'Whether to send any body in the response',
+	displayOptions: {
+		hide: {
+			rawBody: [true],
+		},
+		show: {
+			'/responseMode': ['onReceived'],
+		},
+	},
+};
+
+/** @see noResponseBodyOption */
+export const onReceivedResponseDataOption: INodeProperties = {
+	displayName: 'Response Data',
+	name: 'responseData',
+	type: 'string',
+	displayOptions: {
+		show: {
+			'/responseMode': ['onReceived'],
+		},
+		hide: {
+			noResponseBody: [true],
+		},
+	},
+	default: '',
+	placeholder: 'success',
+	description: 'Custom response data to send',
+};
+
+/** @see noResponseBodyOption */
+export const responseHeadersOption: INodeProperties = {
+	displayName: 'Response Headers',
+	name: 'responseHeaders',
+	placeholder: 'Add Response Header',
+	description: 'Add headers to the webhook response',
+	type: 'fixedCollection',
+	typeOptions: {
+		multipleValues: true,
+	},
+	default: {},
+	options: [
+		{
+			name: 'entries',
+			displayName: 'Entries',
+			values: [
+				{
+					displayName: 'Name',
+					name: 'name',
+					type: 'string',
+					default: '',
+					description: 'Name of the header',
+				},
+				{
+					displayName: 'Value',
+					name: 'value',
+					type: 'string',
+					default: '',
+					description: 'Value of the header',
+				},
+			],
+		},
+	],
+};
+
 export const optionsProperty: INodeProperties = {
 	displayName: 'Options',
 	name: 'options',
@@ -340,47 +453,10 @@ export const optionsProperty: INodeProperties = {
 			description:
 				'The name of the output field to put any binary file data in. Only relevant if binary data is received.',
 		},
-		{
-			displayName: 'Ignore Bots',
-			name: 'ignoreBots',
-			type: 'boolean',
-			default: false,
-			description: 'Whether to ignore requests from bots like link previewers and web crawlers',
-		},
-		{
-			displayName: 'Only Run If',
-			name: 'onlyRunIf',
-			type: 'string',
-			default: '',
-			placeholder: "{{ $json.body.campaign_id === 'user-research-invite' }}",
-			// eslint-disable-next-line n8n-nodes-base/node-param-description-miscased-json
-			description:
-				'Expression evaluated against the incoming request. The workflow will run only if the expression returns true. <code>$json</code> exposes the request as <code>{ body, headers, params, query }</code>. Requests that do not match receive a 200 response, without creating an execution. If the expression fails to evaluate, the request is allowed through and the error is logged.',
-		},
-		{
-			displayName: 'IP(s) Allowlist',
-			name: 'ipWhitelist',
-			type: 'string',
-			placeholder: 'e.g. 127.0.0.1, 192.168.1.0/24',
-			default: '',
-			description:
-				'Comma-separated list of allowed IP addresses or CIDR ranges. Leave empty to allow all IPs.',
-		},
-		{
-			displayName: 'No Response Body',
-			name: 'noResponseBody',
-			type: 'boolean',
-			default: false,
-			description: 'Whether to send any body in the response',
-			displayOptions: {
-				hide: {
-					rawBody: [true],
-				},
-				show: {
-					'/responseMode': ['onReceived'],
-				},
-			},
-		},
+		ignoreBotsOption,
+		onlyRunIfOption,
+		ipWhitelistOption,
+		noResponseBodyOption,
 		{
 			displayName: 'Raw Body',
 			name: 'rawBody',
@@ -411,22 +487,7 @@ export const optionsProperty: INodeProperties = {
 			default: false,
 			description: 'Whether to return the raw body',
 		},
-		{
-			displayName: 'Response Data',
-			name: 'responseData',
-			type: 'string',
-			displayOptions: {
-				show: {
-					'/responseMode': ['onReceived'],
-				},
-				hide: {
-					noResponseBody: [true],
-				},
-			},
-			default: '',
-			placeholder: 'success',
-			description: 'Custom response data to send',
-		},
+		onReceivedResponseDataOption,
 		{
 			displayName: 'Response Content-Type',
 			name: 'responseContentType',
@@ -443,39 +504,7 @@ export const optionsProperty: INodeProperties = {
 			description:
 				'Set a custom content-type to return if another one as the "application/json" should be returned',
 		},
-		{
-			displayName: 'Response Headers',
-			name: 'responseHeaders',
-			placeholder: 'Add Response Header',
-			description: 'Add headers to the webhook response',
-			type: 'fixedCollection',
-			typeOptions: {
-				multipleValues: true,
-			},
-			default: {},
-			options: [
-				{
-					name: 'entries',
-					displayName: 'Entries',
-					values: [
-						{
-							displayName: 'Name',
-							name: 'name',
-							type: 'string',
-							default: '',
-							description: 'Name of the header',
-						},
-						{
-							displayName: 'Value',
-							name: 'value',
-							type: 'string',
-							default: '',
-							description: 'Value of the header',
-						},
-					],
-				},
-			],
-		},
+		responseHeadersOption,
 		{
 			displayName: 'Property Name',
 			name: 'responsePropertyName',

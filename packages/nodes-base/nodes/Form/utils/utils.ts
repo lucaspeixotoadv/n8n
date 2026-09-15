@@ -2,7 +2,6 @@ import { Container } from '@n8n/di';
 import { ensureError } from '@n8n/utils/errors/ensure-error';
 import type { Request, Response } from 'express';
 import { rm } from 'fs/promises';
-import isbot from 'isbot';
 import jwt from 'jsonwebtoken';
 import { DateTime } from 'luxon';
 import { getHtmlSandboxCSP, InstanceSettings, isFormHtmlSandboxingDisabled } from 'n8n-core';
@@ -37,8 +36,8 @@ import sanitize from 'sanitize-html';
 import { getResolvables } from '../../../utils/utilities';
 import { WebhookAuthorizationError } from '../../Webhook/error';
 import {
+	checkRequestGates,
 	generateFormPostBasicAuthToken,
-	isIpAllowed,
 	validateWebhookAuthentication,
 } from '../../Webhook/utils';
 import { FORM_TRIGGER_AUTHENTICATION_PROPERTY } from '../interfaces';
@@ -1393,14 +1392,16 @@ export async function formWebhook(
 	const res = context.getResponseObject();
 	const req = context.getRequestObject();
 
-	// Check IP allowlist first (before bot detection and authentication)
-	if (!isIpAllowed(options.ipWhitelist, req.ips, req.ip)) {
+	// A form answers each refusal its own way, so only the decision is shared.
+	const rejectedBy = checkRequestGates(req, options);
+
+	if (rejectedBy === 'ip') {
 		res.writeHead(403);
 		res.end('IP is not allowed to access this form!');
 		return { noWebhookResponse: true };
 	}
 
-	if (options.ignoreBots && isbot(req.headers['user-agent'])) {
+	if (rejectedBy === 'bot') {
 		res.setHeader('WWW-Authenticate', 'Basic realm="Enter credentials"');
 		res.status(401).send();
 		return { noWebhookResponse: true };

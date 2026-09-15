@@ -5,7 +5,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 
 import { Logger } from '@n8n/backend-common';
-import { ExecutionsConfig, GlobalConfig } from '@n8n/config';
+import { ExecutionsConfig } from '@n8n/config';
 import type { Project } from '@n8n/db';
 import { Container } from '@n8n/di';
 import { createDeferredPromise, type IDeferredPromise } from '@n8n/utils/promise/deferred-promise';
@@ -65,7 +65,6 @@ import { ResponseError } from '@/errors/response-errors/abstract/response.error'
 import { InternalServerError } from '@/errors/response-errors/internal-server.error';
 import { NotFoundError } from '@/errors/response-errors/not-found.error';
 import { EventService } from '@/events/event.service';
-import { parseBody } from '@/middlewares';
 import { WebhookResponseRelay } from '@/scaling/webhook-response-relay';
 import {
 	type AuthFailureReason,
@@ -78,7 +77,7 @@ import { WorkflowStatisticsService } from '@/services/workflow-statistics.servic
 import { WaitTracker } from '@/wait-tracker';
 import { EXECUTION_ENDED_WITHOUT_RESPONSE } from '@/webhooks/constants';
 import { WebhookExecutionContext } from '@/webhooks/webhook-execution-context';
-import { createMultiFormDataParser } from '@/webhooks/webhook-form-data';
+import { parseWebhookRequestBody } from '@/webhooks/webhook-request-body';
 import { extractWebhookLastNodeResponse } from '@/webhooks/webhook-last-node-response-extractor';
 import { extractWebhookOnReceivedResponse } from '@/webhooks/webhook-on-received-response-extractor';
 import type { WebhookResponse } from '@/webhooks/webhook-response';
@@ -87,11 +86,7 @@ import * as WorkflowExecuteAdditionalData from '@/workflow-execute-additional-da
 import * as WorkflowHelpers from '@/workflow-helpers';
 import { WorkflowRunner } from '@/workflow-runner';
 
-import { applySandboxCSP } from './webhook-response-headers';
-import {
-	WebhookResponseHeaders,
-	type WebhookNodeResponseHeaders,
-} from './webhook-response-headers';
+import { applySandboxCSP, WebhookResponseHeaders } from './webhook-response-headers';
 import { WebhookService } from './webhook.service';
 import type { IWebhookResponseCallbackData, WebhookRequest } from './webhook.types';
 
@@ -311,9 +306,6 @@ export const handleFormRedirectionCase = (
 
 	return data;
 };
-
-const { formDataFileSizeMax } = Container.get(GlobalConfig).endpoints;
-const parseFormData = createMultiFormDataParser(formDataFileSizeMax);
 
 export function setupResponseNodePromise(
 	responsePromise: IDeferredPromise<IN8nHttpFullResponse>,
@@ -804,7 +796,7 @@ export async function executeWebhook(
 			};
 		}
 
-		const responseHeaders = evaluateResponseHeaders(context);
+		const responseHeaders = context.evaluateResponseHeaders();
 
 		if (!res.headersSent && responseHeaders) {
 			// Only set given headers if they haven't been sent yet, e.g. for streaming
@@ -1302,45 +1294,7 @@ async function parseRequestBody(
 		return;
 	}
 
-	const { contentType } = req;
-	if (contentType === 'multipart/form-data') {
-		req.body = await parseFormData(req);
-	} else {
-		if (nodeVersion > 1) {
-			if (
-				contentType?.startsWith('application/json') ||
-				contentType?.startsWith('text/plain') ||
-				contentType?.startsWith('application/x-www-form-urlencoded') ||
-				contentType?.endsWith('/xml') ||
-				contentType?.endsWith('+xml')
-			) {
-				await parseBody(req);
-			}
-		} else {
-			await parseBody(req);
-		}
-	}
-}
-
-/**
- * Evaluates the `responseHeaders` parameter of a webhook node
- */
-function evaluateResponseHeaders(context: WebhookExecutionContext): WebhookResponseHeaders {
-	const headers = new WebhookResponseHeaders();
-
-	if (context.webhookData.webhookDescription.responseHeaders === undefined) {
-		return headers;
-	}
-
-	const evaluatedHeaders =
-		context.evaluateComplexWebhookDescriptionExpression<WebhookNodeResponseHeaders>(
-			'responseHeaders',
-		);
-	if (evaluatedHeaders) {
-		headers.addFromNodeHeaders(evaluatedHeaders);
-	}
-
-	return headers;
+	await parseWebhookRequestBody(req, nodeVersion);
 }
 
 /**
