@@ -598,18 +598,27 @@ export function useWorkflowHelpers() {
 			return nodeType === 'form' ? '$execution.resumeFormUrl' : '$execution.resumeUrl';
 		}
 
+		// One entry for every `nodeType` a webhook can declare. `satisfies` makes the map
+		// exhaustive, so a new kind fails to compile instead of composing a URL from an
+		// `undefined` base. A tool callback is registered and routed like any other node
+		// webhook (see `LiveWebhooks`), so it lives in the webhook URL space.
 		const baseUrls = {
 			test: {
 				form: rootStore.formTestUrl,
 				mcp: rootStore.mcpTestUrl,
 				webhook: rootStore.webhookTestUrl,
+				toolCallback: rootStore.webhookTestUrl,
 			},
 			production: {
 				form: rootStore.formUrl,
 				mcp: rootStore.mcpUrl,
 				webhook: rootStore.webhookUrl,
+				toolCallback: rootStore.webhookUrl,
 			},
-		} as const;
+		} satisfies Record<
+			'test' | 'production',
+			Record<NonNullable<IWebhookDescription['nodeType']>, string>
+		>;
 		const baseUrl = baseUrls[showUrlFor][nodeType ?? 'webhook'];
 		const workflowId = currentWorkflowId.value;
 		const path = (await getWebhookExpressionValue(webhookData, 'path', true, node.name)) ?? '';

@@ -93,6 +93,8 @@ type Props = {
 	layout?: 'inline';
 	parameterIssues?: Record<string, string[]>;
 	fromAiDisabledParameters?: string[];
+	/** Parameter the `afterParameter` slot renders after. */
+	slotAfterParameter?: string;
 };
 
 const props = withDefaults(defineProps<Props>(), {
@@ -322,6 +324,17 @@ const credentialsParameterIndex = computed(() => {
 
 const calloutParameterIndex = computed(() => {
 	return parameterItems.value.findIndex((paramData) => paramData.parameter.type === 'callout');
+});
+
+const slotAfterParameterIndex = computed(() => {
+	if (!props.slotAfterParameter) return -1;
+
+	const index = parameterItems.value.findIndex(
+		(paramData) => paramData.parameter.name === props.slotAfterParameter,
+	);
+
+	// An anchor that is hidden by its display options must not swallow the slot content.
+	return index === -1 ? parameterItems.value.length - 1 : index;
 });
 
 const indexToShowSlotAt = computed(() => {
@@ -1060,6 +1073,8 @@ watch(
 					})
 				}}
 			</N8nNotice>
+
+			<slot v-if="index === slotAfterParameterIndex" name="afterParameter" />
 		</div>
 		<div v-if="parameterItems.length === 0" :class="{ indent }">
 			<slot />

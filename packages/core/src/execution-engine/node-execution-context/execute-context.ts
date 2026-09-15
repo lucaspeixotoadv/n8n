@@ -28,6 +28,7 @@ import {
 	getBinaryHelperFunctions,
 	detectBinaryEncoding,
 } from './utils/binary-helper-functions';
+import { getCallbackWaitHelperFunctions } from './utils/callback-wait-helper-functions';
 import { constructExecutionMetaData } from './utils/construct-execution-metadata';
 import { copyInputItems } from './utils/copy-input-items';
 import { getCredentialCheckHelperFunctions } from './utils/credential-check-helper-functions';
@@ -91,6 +92,7 @@ export class ExecuteContext extends BaseExecuteContext implements IExecuteFuncti
 			),
 			...getBinaryHelperFunctions(additionalData, workflow.id),
 			...getDataTableHelperFunctions(additionalData, workflow, node),
+			...getCallbackWaitHelperFunctions(additionalData),
 			...getCredentialCheckHelperFunctions(additionalData),
 			...getSSHTunnelFunctions(),
 			...getFileSystemHelperFunctions(node),

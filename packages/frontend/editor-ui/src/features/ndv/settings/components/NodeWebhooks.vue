@@ -21,6 +21,11 @@ import { N8nIcon, N8nSegmentControl, N8nTooltip } from '@n8n/design-system';
 const props = defineProps<{
 	node: INodeUi;
 	nodeTypeDescription: INodeTypeDescription | null;
+	/**
+	 * Whether the panel renders between parameters rather than above them. It is then closed
+	 * on both sides, so the parameter above it is separated the same way as the ones below.
+	 */
+	betweenParameters?: boolean;
 }>();
 
 const clipboard = useClipboard();
@@ -200,7 +205,11 @@ watch(
 </script>
 
 <template>
-	<div v-if="webhooksNode.length && visibleWebhookUrls.length > 0" class="webhooks">
+	<div
+		v-if="webhooksNode.length && visibleWebhookUrls.length > 0"
+		class="webhooks"
+		:class="{ 'webhooks-between-parameters': betweenParameters }"
+	>
 		<div
 			class="clickable headline"
 			:class="{ expanded: !isMinimized }"
@@ -255,6 +264,13 @@ watch(
 	padding-bottom: var(--spacing--xs);
 	margin: var(--spacing--xs) 0;
 	border-bottom: 1px solid var(--color--text--tint-2);
+
+	// Closes the panel on its other side with the rule that already closes it below, so a
+	// parameter rendered above it is separated exactly like the ones that follow it.
+	&.webhooks-between-parameters {
+		padding-top: var(--spacing--xs);
+		border-top: 1px solid var(--color--text--tint-2);
+	}
 
 	.headline {
 		color: $color-primary;

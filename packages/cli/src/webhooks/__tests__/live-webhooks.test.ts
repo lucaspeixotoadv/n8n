@@ -28,6 +28,7 @@ import { mock } from 'vitest-mock-extended';
 import { WebhookNotFoundError } from '@/errors/response-errors/webhook-not-found.error';
 import type { NodeTypes } from '@/node-types';
 import { LiveWebhooks } from '@/webhooks/live-webhooks';
+import type { ToolCallbackWebhookRegistry } from '@/webhooks/tool-callback-webhook-registry';
 import * as WebhookHelpers from '@/webhooks/webhook-helpers';
 import type { WebhookService } from '@/webhooks/webhook.service';
 import type { WebhookRequest } from '@/webhooks/webhook.types';
@@ -52,6 +53,7 @@ describe('LiveWebhooks', () => {
 	const expressionEngineConfig = mock<ExpressionEngineConfig>({
 		allowWebhookIsolateSkip: true,
 	});
+	const toolCallbackWebhooks = mock<ToolCallbackWebhookRegistry>();
 
 	let liveWebhooks: LiveWebhooks;
 
@@ -68,6 +70,7 @@ describe('LiveWebhooks', () => {
 			workflowsConfig,
 			workflowPublishedDataService,
 			expressionEngineConfig,
+			toolCallbackWebhooks,
 		);
 
 		// Mock WorkflowExecuteAdditionalData.getBase to avoid DI issues

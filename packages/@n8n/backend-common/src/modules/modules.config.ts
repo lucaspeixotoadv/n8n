@@ -39,6 +39,7 @@ export const MODULE_NAMES = [
 	'engine-v2',
 	'policy-infrastructure',
 	'type-availability-policies',
+	'wait-for-callback',
 ] as const;
 
 export type ModuleName = (typeof MODULE_NAMES)[number];
