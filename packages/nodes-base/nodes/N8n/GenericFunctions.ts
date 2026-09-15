@@ -12,6 +12,7 @@ import type {
 	IRequestOptions,
 	JsonObject,
 	PreSendAction,
+	ResourceMapperValue,
 } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
@@ -231,6 +232,50 @@ export const prepareWorkflowUpdateBody: PreSendAction = async function (
 	}
 
 	requestOptions.body = newBody;
+
+	return requestOptions;
+};
+
+/**
+ * A helper function to build the body of a partial credential update from the
+ * 'Credential Data' resource mapper.
+ *
+ * Only the fields present in the mapper value are sent, so a field that was removed or
+ * left empty keeps its stored value on the server (`isPartialData: true`). An expression
+ * that resolves to `undefined` gives no value to set and is skipped too. An expression that
+ * resolves to `null` is an error: credential fields cannot hold null and the value is not
+ * converted silently. The stored values of the credential are never read.
+ */
+export const prepareCredentialUpdateBody: PreSendAction = async function (
+	this: IExecuteSingleFunctions,
+	requestOptions: IHttpRequestOptions,
+): Promise<IHttpRequestOptions> {
+	const mapper = this.getNodeParameter('credentialData', {}) as Partial<ResourceMapperValue>;
+	const data: IDataObject = {};
+
+	for (const [name, value] of Object.entries(mapper.value ?? {})) {
+		if (value === undefined) continue;
+		if (value === null) {
+			throw new NodeOperationError(
+				this.getNode(),
+				`The credential field "${name}" resolved to null`,
+				{
+					description:
+						'Credential fields cannot be set to null. Give the field a value, or remove it to keep its stored value.',
+				},
+			);
+		}
+		data[name] = value;
+	}
+
+	if (Object.keys(data).length === 0) {
+		throw new NodeOperationError(this.getNode(), 'Set at least one credential field to update', {
+			description:
+				'Add a field under "Credential Data" and give it a value. Fields left empty or removed keep their stored value.',
+		});
+	}
+
+	requestOptions.body = Object.assign({}, requestOptions.body, { data, isPartialData: true });
 
 	return requestOptions;
 };
