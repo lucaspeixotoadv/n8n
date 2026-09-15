@@ -22,7 +22,7 @@ import { Push } from '@/push';
 import { CacheService } from '@/services/cache/cache.service';
 
 describe('CollaborationService', () => {
-	mockInstance(Push, new Push(mock(), mock(), mock(), mock(), mock()));
+	mockInstance(Push, new Push(mock(), mock(), mock(), mock(), mock(), mock()));
 	let pushService: Push;
 	let collaborationService: CollaborationService;
 	let owner: User;

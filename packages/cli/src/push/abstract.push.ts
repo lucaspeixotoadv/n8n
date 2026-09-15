@@ -9,6 +9,8 @@ import type { OnPushMessage } from '@/push/types';
 
 export interface AbstractPushEvents {
 	message: OnPushMessage;
+	/** A frontend session went away; anything keyed by its push ref can be released. */
+	disconnected: string;
 }
 
 /**
@@ -74,6 +76,8 @@ export abstract class AbstractPush<Connection> extends TypedEmitter<AbstractPush
 
 		delete this.connections[pushRef];
 		delete this.userIdByPushRef[pushRef];
+
+		this.emit('disconnected', pushRef);
 	}
 
 	private sendTo({ type, data }: PushMessage, pushRefs: string[], asBinary: boolean = false) {

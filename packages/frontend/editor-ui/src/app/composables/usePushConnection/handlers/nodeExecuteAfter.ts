@@ -8,6 +8,7 @@ import type { PushPayload } from '@n8n/api-types';
 import { isValidNodeConnectionType } from '@/app/utils/typeGuards';
 import { openFormPopupWindow } from '@/features/execution/executions/executions.utils';
 import { trackNodeExecution } from './trackNodeExecution';
+import { allExecutionDocuments, resolveExecutionDocuments } from './executionDocuments';
 import type { PushHandlerOptions } from './types';
 
 /**
@@ -15,16 +16,17 @@ import type { PushHandlerOptions } from './types';
  */
 export async function nodeExecuteAfter(
 	{ data: pushData }: NodeExecuteAfter,
-	{ documentId }: PushHandlerOptions,
+	options: PushHandlerOptions,
 ) {
-	const workflowExecutionStateStore = useWorkflowExecutionStateStore(documentId);
 	const assistantStore = useAssistantStore();
 
-	// Ignore node events that don't belong to the execution this document is
-	// tracking — a concurrent execution's node must not write into this
-	// document's data or fire its side effects (form popups, tracking, assistant).
-	const activeExecutionId = workflowExecutionStateStore.activeExecutionId;
-	if (activeExecutionId !== pushData.executionId) {
+	// Ignore node events for an execution nothing on screen shows — a concurrent
+	// execution's node must not write into a document's data. Only the document
+	// that started the run gets the side effects of having started it (form
+	// popups, tracking, assistant); a viewer just sees the node finish.
+	const documents = resolveExecutionDocuments(pushData.executionId, options);
+	const documentIds = allExecutionDocuments(documents);
+	if (documentIds.length === 0) {
 		return;
 	}
 
@@ -65,14 +67,22 @@ export async function nodeExecuteAfter(
 		pushDataWithPlaceholderOutputData,
 	);
 
-	workflowExecutionStateStore.executingNode.removeExecutingNode(pushData.nodeName);
-	workflowExecutionStateStore.clearAgentNodeProgress(pushData.nodeName);
+	for (const documentId of documentIds) {
+		const stateStore = useWorkflowExecutionStateStore(documentId);
+		stateStore.executingNode.removeExecutingNode(pushData.nodeName);
+		stateStore.clearAgentNodeProgress(pushData.nodeName);
+	}
 
-	// Side effects
+	if (documents.ownerDocumentId === null) {
+		return;
+	}
+
+	// Side effects, for the document that started the run only
+	const ownerStateStore = useWorkflowExecutionStateStore(documents.ownerDocumentId);
 	if (pushData.data.executionStatus === 'waiting' && pushData.data.metadata?.resumeFormUrl) {
 		openFormPopupWindow(pushData.data.metadata.resumeFormUrl);
 	} else if (pushData.data.executionStatus !== 'waiting') {
-		void trackNodeExecution(pushData, workflowExecutionStateStore.workflowId);
+		void trackNodeExecution(pushData, ownerStateStore.workflowId);
 	}
 
 	void assistantStore.onNodeExecution(pushData);

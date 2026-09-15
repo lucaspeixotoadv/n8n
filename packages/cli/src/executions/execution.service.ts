@@ -64,6 +64,7 @@ import { getWorkflowProjectDetailsSafe } from '@/workflows/utils';
 import { WorkflowSharingService } from '@/workflows/workflow-sharing.service';
 
 import { EngineV2ExecutionReader } from './engine-v2-execution-reader.service';
+import { ExecutionSnapshotService } from './execution-snapshot.service';
 import { MissingExecutionDataError } from './execution-data/missing-execution-data.error';
 import { isExecutionIdV2 } from './execution-id';
 import { ExecutionPersistence } from './execution-persistence';
@@ -139,6 +140,7 @@ export class ExecutionService {
 		private readonly executionStopService: ExecutionStopService,
 		private readonly ownershipService: OwnershipService,
 		private readonly engineV2ExecutionReader: EngineV2ExecutionReader,
+		private readonly executionSnapshotService: ExecutionSnapshotService,
 	) {}
 
 	/**
@@ -201,6 +203,11 @@ export class ExecutionService {
 			throw new UnexpectedError('Expected execution data for display read');
 		}
 
+		// An unfinished execution has not written its snapshot yet, so on its own it reports
+		// the state it started in. The journal of what has run since completes it, making one
+		// read answer for every status.
+		const completed = await this.executionSnapshotService.complete(execution);
+
 		let redactExecutionData: boolean | undefined;
 		const redactQuery = ExecutionRedactionQueryDtoSchema.safeParse(req.query);
 		if (redactQuery.success) {
@@ -208,7 +215,7 @@ export class ExecutionService {
 		}
 
 		const processedExecution = await this.executionRedactionServiceProxy.processExecution(
-			execution,
+			completed,
 			{
 				user: req.user,
 				redactExecutionData,
@@ -218,9 +225,9 @@ export class ExecutionService {
 		);
 
 		return {
-			...execution,
+			...completed,
 			data: stringify(processedExecution.data),
-			dataTooLargeToDisplay: execution.dataTooLargeToDisplay,
+			dataTooLargeToDisplay: completed.dataTooLargeToDisplay,
 		};
 	}
 

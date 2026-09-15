@@ -1,4 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia';
+import { stringify } from 'flatted';
 import { mock } from 'vitest-mock-extended';
 import type { Router } from 'vue-router';
 import { executionStarted } from './executionStarted';
@@ -9,7 +10,13 @@ import {
 import type { ExecutionStarted } from '@n8n/api-types/push/execution';
 import { useWorkflowExecutionStateStore } from '@/app/stores/workflowExecutionState.store';
 import { createExecutionDataId, useExecutionDataStore } from '@/app/stores/executionData.store';
+import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
 import type { PushHandlerOptions } from './types';
+
+vi.mock('@/features/execution/executions/executionWatch.api', () => ({
+	watchExecution: vi.fn(async () => {}),
+	unwatchExecution: vi.fn(async () => {}),
+}));
 
 describe('executionStarted', () => {
 	const documentId = createWorkflowDocumentId('wf-123');
@@ -32,6 +39,80 @@ describe('executionStarted', () => {
 		workflowDocumentStore.setName('My Workflow');
 
 		workflowExecutionStateStore = useWorkflowExecutionStateStore(documentId);
+	});
+
+	it('marks an execution a document watches as running again when it resumes', async () => {
+		useExecutionWatchStore().observe(documentId, 'exec-1');
+		const executionDataStore = useExecutionDataStore(createExecutionDataId('exec-1'));
+		// What `executionWaiting` left behind when the run parked.
+		executionDataStore.setExecution({ id: 'exec-1', status: 'waiting' } as never);
+
+		await executionStarted(makeEvent('exec-1'), options);
+
+		expect(executionDataStore.execution?.status).toBe('running');
+		// A watcher did not start the run: it must not take it over as its own.
+		expect(workflowExecutionStateStore.activeExecutionId).toBeUndefined();
+	});
+
+	it('marks a queued execution a document watches as running when it gets its turn', async () => {
+		useExecutionWatchStore().observe(documentId, 'exec-1');
+		const executionDataStore = useExecutionDataStore(createExecutionDataId('exec-1'));
+		executionDataStore.setExecution({
+			id: 'exec-1',
+			status: 'new',
+			data: { resultData: { runData: {} } },
+		} as never);
+		const startedAt = new Date('2026-01-01T00:00:00Z');
+
+		await executionStarted(
+			{
+				type: 'executionStarted',
+				data: { ...makeEvent('exec-1').data, startedAt, flattedRunData: '[{}]' },
+			},
+			options,
+		);
+
+		expect(executionDataStore.execution?.status).toBe('running');
+		expect(executionDataStore.execution?.startedAt).toEqual(startedAt);
+	});
+
+	it('merges the run data a resume carries into what a watching document already shows', async () => {
+		useExecutionWatchStore().observe(documentId, 'exec-1');
+		const executionDataStore = useExecutionDataStore(createExecutionDataId('exec-1'));
+		const live = { startTime: 2, executionTime: 1, executionIndex: 1, source: [] };
+		const stored = { startTime: 1, executionTime: 1, executionIndex: 0, source: [] };
+		executionDataStore.setExecution({
+			id: 'exec-1',
+			status: 'waiting',
+			data: { resultData: { runData: { Live: [live] } } },
+		} as never);
+
+		await executionStarted(
+			{
+				type: 'executionStarted',
+				data: {
+					...makeEvent('exec-1').data,
+					startedAt: new Date(),
+					flattedRunData: stringify({ Stored: [stored] }),
+				},
+			},
+			options,
+		);
+
+		expect(executionDataStore.execution?.data?.resultData.runData).toEqual({
+			Live: [live],
+			Stored: [stored],
+		});
+	});
+
+	it('leaves a watched execution that already ended alone', async () => {
+		useExecutionWatchStore().observe(documentId, 'exec-1');
+		const executionDataStore = useExecutionDataStore(createExecutionDataId('exec-1'));
+		executionDataStore.setExecution({ id: 'exec-1', status: 'success' } as never);
+
+		await executionStarted(makeEvent('exec-1'), options);
+
+		expect(executionDataStore.execution?.status).toBe('success');
 	});
 
 	it('should skip when activeExecutionId is undefined', async () => {

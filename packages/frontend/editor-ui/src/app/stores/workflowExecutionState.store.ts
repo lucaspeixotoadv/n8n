@@ -7,10 +7,12 @@ import {
 	readonly,
 	ref,
 	shallowReactive,
+	watch,
 	type ComputedRef,
 } from 'vue';
 import { createEventHook } from '@vueuse/core';
 import { structuralComputed } from '@n8n/composables/structuralComputed';
+import { isTerminalExecutionStatus } from 'n8n-workflow';
 import type {
 	ExecutionStatus,
 	ExecutionSummary,
@@ -32,8 +34,10 @@ import { useUIStore } from '@/app/stores/ui.store';
 import {
 	createExecutionDataId,
 	disposeExecutionDataStore,
+	hasExecutionDataStore,
 	useExecutionDataStore,
 } from './executionData.store';
+import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
 import {
 	injectWorkflowDocumentStore,
 	useWorkflowDocumentStore,
@@ -224,7 +228,7 @@ export function useWorkflowExecutionStateStore(id: WorkflowDocumentId) {
 		}
 
 		function handleAgentNodeProgress({ data }: AgentNodeProgress) {
-			if (activeExecutionId.value !== data.executionId) return;
+			if (getResolvedActiveExecutionId() !== data.executionId) return;
 
 			const callKey = capabilityCallKey(data);
 			const latest = latestAgentProgressByCapabilityCall.get(callKey);
@@ -343,6 +347,51 @@ export function useWorkflowExecutionStateStore(id: WorkflowDocumentId) {
 				activeExecutionId.value === undefined &&
 				typeof displayedExecutionId.value === 'string',
 		);
+
+		// --- Observation ---
+
+		/**
+		 * The execution this document receives live events for: the one it displays, for as
+		 * long as that execution can still produce any. Derived from the displayed execution
+		 * rather than declared by whoever loaded it, so every way of showing an execution —
+		 * a preview, a debug session, a run started here, a hand-off — is followed the same
+		 * way, and a document stops being followed the moment it shows something else or
+		 * the execution ends.
+		 */
+		const observedExecutionId = computed<string | null>(() => {
+			const executionId = getResolvedActiveExecutionId();
+			if (executionId === undefined || executionId === IN_PROGRESS_EXECUTION_ID) return null;
+
+			const executionDataId = createExecutionDataId(executionId);
+			// Peek before reading: instantiating a store here would leave an empty one behind
+			// for an execution that was just released.
+			if (!hasExecutionDataStore(executionDataId)) return null;
+
+			const status = useExecutionDataStore(executionDataId).execution?.status;
+			return status !== undefined && !isTerminalExecutionStatus(status) ? executionId : null;
+		});
+
+		// Synchronous on purpose: the registry the push handlers consult must reflect the
+		// displayed execution at the moment it changes, not after the next tick.
+		watch(
+			observedExecutionId,
+			(executionId) => useExecutionWatchStore().observe(documentId, executionId),
+			{ flush: 'sync' },
+		);
+
+		// The node shown as executing belongs to one execution. Showing another one starts
+		// from a clean slate, whatever the previous execution was still doing.
+		watch(
+			() => getResolvedActiveExecutionId(),
+			(next, previous) => {
+				if (next !== previous) executingNode.clearNodeExecutionQueue();
+			},
+			{ flush: 'sync' },
+		);
+
+		onScopeDispose(() => {
+			useExecutionWatchStore().observe(documentId, null);
+		});
 
 		// Drops the entries whose name now belongs to a different node than the one
 		// that produced them.
@@ -1066,6 +1115,7 @@ export function useWorkflowExecutionStateStore(id: WorkflowDocumentId) {
 			isWorkflowRunning,
 			getAllLoadedFinishedExecutions,
 			getPastChatMessages,
+			getResolvedActiveExecutionId,
 			getActiveExecutionRunDataByNodeName,
 			activeExecutionIssuesByNodeName,
 			activeExecutionPinDataByNodeName,

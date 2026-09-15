@@ -235,6 +235,8 @@ export function useExecutionPreviewDocument(options: UseExecutionPreviewDocument
 				versionId: documentVersion,
 			} as IWorkflowDb);
 
+			// Displaying the execution is what makes the document follow it live while it
+			// runs; the execution-state store derives the subscription from what it shows.
 			useWorkflowExecutionStateStore(documentId).setWorkflowExecutionData(data);
 			touchLoadedExecution(executionId);
 			evictLeastRecentlyUsedExecutions(executionId, workflowId);

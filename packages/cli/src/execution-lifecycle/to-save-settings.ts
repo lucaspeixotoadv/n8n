@@ -2,11 +2,14 @@ import { GlobalConfig } from '@n8n/config';
 import { Container } from '@n8n/di';
 import type { IWorkflowSettings } from 'n8n-workflow';
 
+import { ExecutionJournalConfig } from './execution-journal.config';
+
 export type ExecutionSaveSettings = {
 	error: boolean | 'all' | 'none';
 	success: boolean | 'all' | 'none';
 	manual: boolean;
 	progress: boolean;
+	liveProgress: boolean;
 };
 
 /**
@@ -16,6 +19,8 @@ export type ExecutionSaveSettings = {
  * - `success`: Whether to successful executions in production.
  * - `manual`: Whether to save successful or failed manual executions.
  * - `progress`: Whether to save execution progress, i.e. after each node's execution.
+ * - `liveProgress`: Whether to journal each node run, so the execution can be read while
+ *   it is still running, and so a crashed one still says how far it got.
  */
 export function toSaveSettings(
 	workflowSettings: IWorkflowSettings | null = {},
@@ -25,6 +30,7 @@ export function toSaveSettings(
 		SUCCESS: Container.get(GlobalConfig).executions.saveDataOnSuccess,
 		MANUAL: Container.get(GlobalConfig).executions.saveDataManualExecutions,
 		PROGRESS: Container.get(GlobalConfig).executions.saveExecutionProgress,
+		LIVE_PROGRESS: Container.get(ExecutionJournalConfig).enabled,
 	};
 
 	const {
@@ -32,6 +38,7 @@ export function toSaveSettings(
 		saveDataSuccessExecution = DEFAULTS.SUCCESS,
 		saveManualExecutions = DEFAULTS.MANUAL,
 		saveExecutionProgress = DEFAULTS.PROGRESS,
+		liveExecutionProgress = DEFAULTS.LIVE_PROGRESS,
 	} = workflowSettings ?? {};
 
 	return {
@@ -42,5 +49,7 @@ export function toSaveSettings(
 				: saveDataSuccessExecution === 'all',
 		manual: saveManualExecutions === 'DEFAULT' ? DEFAULTS.MANUAL : saveManualExecutions,
 		progress: saveExecutionProgress === 'DEFAULT' ? DEFAULTS.PROGRESS : saveExecutionProgress,
+		liveProgress:
+			liveExecutionProgress === 'DEFAULT' ? DEFAULTS.LIVE_PROGRESS : liveExecutionProgress,
 	};
 }

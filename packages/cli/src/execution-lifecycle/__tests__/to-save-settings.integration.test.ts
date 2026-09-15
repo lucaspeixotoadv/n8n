@@ -1,11 +1,14 @@
 import { GlobalConfig } from '@n8n/config';
 import { Container } from '@n8n/di';
 
+import { ExecutionJournalConfig } from '../execution-journal.config';
 import { toSaveSettings } from '../to-save-settings';
 
 const globalConfig = Container.get(GlobalConfig);
+const journalConfig = Container.get(ExecutionJournalConfig);
 
 afterEach(() => {
+	journalConfig.enabled = false;
 	globalConfig.executions.saveDataOnError = 'all';
 	globalConfig.executions.saveDataOnSuccess = 'all';
 	globalConfig.executions.saveExecutionProgress = false;
@@ -157,6 +160,42 @@ describe('execution progress', () => {
 		const _saveSettings = toSaveSettings();
 
 		expect(_saveSettings.progress).toBe(false);
+	});
+});
+
+describe('live execution progress', () => {
+	it('should favor workflow setting over default', () => {
+		journalConfig.enabled = false;
+
+		expect(toSaveSettings({ liveExecutionProgress: true }).liveProgress).toBe(true);
+
+		journalConfig.enabled = true;
+
+		expect(toSaveSettings({ liveExecutionProgress: false }).liveProgress).toBe(false);
+	});
+
+	it('should fall back to default if workflow setting is explicit default', () => {
+		journalConfig.enabled = true;
+
+		expect(toSaveSettings({ liveExecutionProgress: 'DEFAULT' }).liveProgress).toBe(true);
+
+		journalConfig.enabled = false;
+
+		expect(toSaveSettings({ liveExecutionProgress: 'DEFAULT' }).liveProgress).toBe(false);
+	});
+
+	it('should fall back to default if no workflow setting', () => {
+		journalConfig.enabled = true;
+
+		expect(toSaveSettings().liveProgress).toBe(true);
+
+		journalConfig.enabled = false;
+
+		expect(toSaveSettings().liveProgress).toBe(false);
+	});
+
+	it('should be off by default', () => {
+		expect(toSaveSettings().liveProgress).toBe(false);
 	});
 });
 

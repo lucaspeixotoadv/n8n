@@ -16,6 +16,7 @@ import { useInjectWorkflowId } from '@/app/composables/useInjectWorkflowId';
 import { getResourcePermissions } from '@n8n/permissions';
 import { useSettingsStore } from '@n8n/stores/settings.store';
 import { useWorkflowsListStore } from '@/app/stores/workflowsList.store';
+import { isTerminalExecutionStatus } from 'n8n-workflow';
 import type { AnnotationVote, ExecutionSummary } from 'n8n-workflow';
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -73,6 +74,15 @@ const debugButtonData = computed(() =>
 );
 const isRetriable = computed(
 	() => !!props.execution && executionHelpers.isExecutionRetriable(props.execution),
+);
+
+/**
+ * Whether the run can still be stopped. Status is the only discriminator: an execution that
+ * has not reached a terminal state is queued, running or parked, and all three are shown on
+ * the canvas and followed live.
+ */
+const isExecutionActive = computed(
+	() => !!props.execution && !isTerminalExecutionStatus(props.execution.status),
 );
 
 const { isFeatureEnabled: isAddToDatasetFeatureEnabled } = useAddExecutionToDataset(workflowId);
@@ -261,32 +271,7 @@ const onVoteClick = async (voteValue: AnnotationVote) => {
 </script>
 
 <template>
-	<div v-if="executionUIDetails?.name === 'new'" :class="$style.newInfo">
-		<N8nText :class="$style.newMessage" color="text-light">
-			{{ locale.baseText('executionDetails.newMessage') }}
-		</N8nText>
-		<N8nButton variant="subtle" class="mt-l" @click="handleStopClick">
-			{{ locale.baseText('executionsList.stopExecution') }}
-		</N8nButton>
-	</div>
-	<div v-else-if="executionUIDetails?.name === 'running'" :class="$style.runningInfo">
-		<div :class="$style.spinner">
-			<N8nSpinner type="ring" />
-		</div>
-		<N8nText :class="$style.runningMessage" color="text-light">
-			{{ locale.baseText('executionDetails.runningMessage') }}
-		</N8nText>
-		<N8nButton
-			variant="subtle"
-			data-test-id="stop-execution"
-			class="mt-l"
-			:disabled="!workflowPermissions.execute"
-			@click="handleStopClick"
-		>
-			{{ locale.baseText('executionsList.stopExecution') }}
-		</N8nButton>
-	</div>
-	<div v-else-if="executionUIDetails" :class="$style.previewContainer">
+	<div v-if="executionUIDetails" :class="$style.previewContainer">
 		<div
 			v-if="execution"
 			:class="$style.executionDetails"
@@ -390,6 +375,17 @@ const onVoteClick = async (voteValue: AnnotationVote) => {
 			</div>
 
 			<div :class="$style.actions">
+				<N8nButton
+					v-if="isExecutionActive"
+					variant="subtle"
+					size="medium"
+					data-test-id="stop-execution"
+					:disabled="!workflowPermissions.execute"
+					@click="handleStopClick"
+				>
+					{{ locale.baseText('executionsList.stopExecution') }}
+				</N8nButton>
+
 				<RouterLink
 					:to="{
 						name: VIEWS.EXECUTION_DEBUG,
@@ -546,21 +542,6 @@ const onVoteClick = async (voteValue: AnnotationVote) => {
 
 .error {
 	color: var(--color--danger);
-}
-
-.newInfo,
-.runningInfo {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	margin-top: var(--spacing--4xl);
-}
-
-.newMessage,
-.runningMessage {
-	width: 240px;
-	margin-top: var(--spacing--lg);
-	text-align: center;
 }
 
 .debugLink {

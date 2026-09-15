@@ -36,6 +36,7 @@ import {
 } from '@/features/execution/executions/executions.utils';
 import { getTriggerNodeServiceName } from '@/app/utils/nodeTypesUtils';
 import type { ExecutionFinished } from '@n8n/api-types/push/execution';
+import { resolveExecutionDocuments } from './executionDocuments';
 import { useI18n } from '@n8n/i18n';
 import type {
 	ExecutionStatus,
@@ -68,6 +69,12 @@ export async function executionFinished({ data }: ExecutionFinished, options: Pu
 	const readyToRunStore = useReadyToRunStore();
 
 	const workflowExecutionStateStore = useWorkflowExecutionStateStore(documentId);
+
+	// Documents that merely display this execution refresh from the server and stop
+	// there: a viewer did not start the run, so none of the toasts, telemetry or
+	// reruns below apply to them.
+	const { watcherDocumentIds } = resolveExecutionDocuments(data.executionId, options);
+	await refreshWatchingDocuments(data.executionId, watcherDocumentIds);
 
 	// Only act on the finish of the execution this document is actually tracking.
 	// Normal match is on the execution id; when the active execution is still
@@ -204,6 +211,62 @@ export async function executionFinished({ data }: ExecutionFinished, options: Pu
 }
 
 /**
+ * Brings every document displaying this execution up to its final state.
+ *
+ * A watched run is followed node by node, but the finish carries no data, and the last
+ * events of a run can be trimmed, so the stored execution is the authority on how it
+ * ended. It is read once and lands in the execution's own data store, which every document
+ * showing it renders from.
+ *
+ * Nothing here decides what a document shows. A document that has moved on to another
+ * execution by the time the read returns is left alone: its data store gets the final
+ * state for whenever the execution is shown again, and the subscription ends because the
+ * execution reached a terminal state, not because this handler ran.
+ */
+export async function refreshWatchingDocuments(
+	executionId: string,
+	documentIds: WorkflowDocumentId[],
+): Promise<void> {
+	if (documentIds.length === 0) {
+		return;
+	}
+
+	const execution = await fetchStoredExecution(executionId);
+	if (!execution) return;
+
+	const executionDataStore = useExecutionDataStore(createExecutionDataId(executionId));
+	const snapshot = executionDataStore.getExecutionSnapshot();
+	if (snapshot === null) return;
+
+	executionDataStore.setExecution({
+		...snapshot,
+		id: executionId,
+		status: execution.status,
+		stoppedAt: execution.stoppedAt ?? new Date(),
+	});
+	executionDataStore.setExecutionRunData(getRunExecutionData(execution));
+
+	for (const documentId of documentIds) {
+		const stateStore = useWorkflowExecutionStateStore(documentId);
+		if (stateStore.getResolvedActiveExecutionId() === executionId) {
+			stateStore.executingNode.clearNodeExecutionQueue();
+		}
+	}
+}
+
+/** The execution as stored, for a document that only displays it. */
+async function fetchStoredExecution(
+	executionId: string,
+): Promise<Pick<IExecutionResponse, 'status' | 'stoppedAt' | 'data'> | undefined> {
+	try {
+		const execution = await useWorkflowsStore().fetchExecutionDataById(executionId);
+		return execution?.data ? execution : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
  * Force-refreshes the AI gateway wallet when the finished run used an n8n-managed
  * credential. No-op when the gateway is disabled or no managed credential is present.
  */
@@ -299,7 +362,9 @@ export async function fetchExecutionData(
 /**
  * Returns the run execution data from the execution object in a normalized format
  */
-export function getRunExecutionData(execution: SimplifiedExecution): IRunExecutionData {
+export function getRunExecutionData(
+	execution: Pick<SimplifiedExecution, 'data'>,
+): IRunExecutionData {
 	return createRunExecutionData({
 		...execution.data,
 		startData: execution.data?.startData,

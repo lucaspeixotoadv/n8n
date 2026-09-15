@@ -27,6 +27,11 @@ import {
 import { useLogsStore } from '@/app/stores/logs.store';
 import { useExecutionPreviewDocument } from './useExecutionPreviewDocument';
 
+vi.mock('@/features/execution/executions/executionWatch.api', () => ({
+	watchExecution: vi.fn(async () => {}),
+	unwatchExecution: vi.fn(async () => {}),
+}));
+
 vi.mock('@n8n/composables/useToast', () => {
 	const showMessage = vi.fn();
 	const showError = vi.fn();

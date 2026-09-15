@@ -53,6 +53,7 @@ export const LOG_SCOPES = [
 	'metrics',
 	'scheduler',
 	'enqueued-execution-recovery',
+	'execution-journal',
 	'engine-v2',
 	'policy',
 ] as const;

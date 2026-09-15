@@ -20,6 +20,7 @@ import { EvaluationConfig } from './evaluation-config.ee';
 import { ExecutionAnnotation } from './execution-annotation.ee';
 import { ExecutionData } from './execution-data';
 import { ExecutionEntity } from './execution-entity';
+import { ExecutionNodeRun } from './execution-node-run';
 import type { ExecutionDataStorageLocation } from './execution-entity';
 import { ExecutionMetadata } from './execution-metadata';
 import { Folder } from './folder';
@@ -172,6 +173,7 @@ export {
 	TestRun,
 	TestCaseExecution,
 	ExecutionEntity,
+	ExecutionNodeRun,
 	ProjectSecretsProviderAccess,
 	type SecretsProviderAccessRole,
 	SecretsProviderConnection,
@@ -232,6 +234,7 @@ export const entities = {
 	TestRun,
 	TestCaseExecution,
 	ExecutionEntity,
+	ExecutionNodeRun,
 	Role,
 	ScheduledJob,
 	ScheduledTask,

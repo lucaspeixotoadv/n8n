@@ -3,17 +3,37 @@ import { useWorkflowDocumentStore } from '@/app/stores/workflowDocument.store';
 import { useWorkflowExecutionStateStore } from '@/app/stores/workflowExecutionState.store';
 import { createExecutionDataId, useExecutionDataStore } from '@/app/stores/executionData.store';
 import { parse } from 'flatted';
-import { createRunExecutionData } from 'n8n-workflow';
-import type { IRunExecutionData } from 'n8n-workflow';
+import { createRunExecutionData, isTerminalExecutionStatus } from 'n8n-workflow';
+import type { IRunData, IRunExecutionData } from 'n8n-workflow';
+import { resolveExecutionDocuments } from './executionDocuments';
 import type { PushHandlerOptions } from './types';
 
 /**
  * Handles the 'executionStarted' event, which happens when a workflow is executed.
  */
-export async function executionStarted(
-	{ data }: ExecutionStarted,
-	{ documentId }: PushHandlerOptions,
-) {
+export async function executionStarted({ data }: ExecutionStarted, options: PushHandlerOptions) {
+	const { documentId } = options;
+	// For a document merely watching the execution this is the one event that says the run
+	// is going: a queued execution that got its turn, or a parked one that resumed. A resume
+	// carries the run data so far, which the document may already hold in part, so it is
+	// merged rather than replaced. The node events that follow keep updating it.
+	const { watcherDocumentIds } = resolveExecutionDocuments(data.executionId, options);
+	if (watcherDocumentIds.length > 0) {
+		const watchedStore = useExecutionDataStore(createExecutionDataId(data.executionId));
+		const watched = watchedStore.getExecutionSnapshot();
+		if (watched !== null && !isTerminalExecutionStatus(watched.status)) {
+			if (watched.status !== 'running') {
+				watchedStore.setExecution(
+					{ ...watched, status: 'running', startedAt: new Date(data.startedAt) },
+					{ stripWaitingTaskData: false },
+				);
+			}
+			if (data.flattedRunData) {
+				watchedStore.mergeExecutionRunData(parse(data.flattedRunData) as IRunData);
+			}
+		}
+	}
+
 	const workflowDocumentStore = useWorkflowDocumentStore(documentId);
 	const workflowExecutionStateStore = useWorkflowExecutionStateStore(documentId);
 	const isIframe = window !== window.parent;

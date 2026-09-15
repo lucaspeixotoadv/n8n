@@ -32,6 +32,12 @@ import {
 	type ExecutionSummary,
 } from 'n8n-workflow';
 import { IN_PROGRESS_EXECUTION_ID } from '@/app/constants/placeholders';
+import { useExecutionWatchStore } from '@/features/execution/executions/executionWatch.store';
+
+vi.mock('@/features/execution/executions/executionWatch.api', () => ({
+	watchExecution: vi.fn(async () => {}),
+	unwatchExecution: vi.fn(async () => {}),
+}));
 
 function makeExecution(overrides: Partial<IExecutionResponse> = {}): IExecutionResponse {
 	return createTestWorkflowExecutionResponse({
@@ -483,6 +489,139 @@ describe('workflowExecutionState.store', () => {
 			store.resetExecutionState();
 
 			expect(store.stoppedExecutionId).toBeNull();
+		});
+	});
+
+	describe('observation of the displayed execution', () => {
+		const documentId = createWorkflowDocumentId('wf-observe');
+		const observed = () => useExecutionWatchStore().observedExecution(documentId);
+
+		function storeExecution(id: string, status: IExecutionResponse['status']) {
+			useExecutionDataStore(createExecutionDataId(id)).setExecution(
+				makeExecution({ id, status, finished: status === 'success' }),
+			);
+		}
+
+		it('observes a running execution the moment it is displayed', () => {
+			storeExecution('exec-1', 'running');
+			const store = useWorkflowExecutionStateStore(documentId);
+
+			store.setDisplayedExecutionId('exec-1');
+
+			expect(observed()).toBe('exec-1');
+		});
+
+		it.each(['new', 'running', 'waiting'] as const)('observes a %s execution', (status) => {
+			storeExecution('exec-1', status);
+			useWorkflowExecutionStateStore(documentId).setWorkflowExecutionData(
+				makeExecution({ id: 'exec-1', status }),
+			);
+
+			expect(observed()).toBe('exec-1');
+		});
+
+		it.each(['success', 'error', 'canceled', 'crashed'] as const)(
+			'does not observe a %s execution',
+			(status) => {
+				storeExecution('exec-1', status);
+
+				useWorkflowExecutionStateStore(documentId).setDisplayedExecutionId('exec-1');
+
+				expect(observed()).toBeUndefined();
+			},
+		);
+
+		it('observes the execution this document started, once its id is known', () => {
+			const store = useWorkflowExecutionStateStore(documentId);
+			store.setWorkflowExecutionData(makeExecution({ id: IN_PROGRESS_EXECUTION_ID }));
+			expect(observed()).toBeUndefined();
+
+			// What `executionStarted` does once the backend named the run.
+			store.promotePendingExecution('exec-1');
+			useExecutionDataStore(createExecutionDataId('exec-1')).setExecution(
+				makeExecution({ id: 'exec-1', status: 'running' }),
+			);
+
+			expect(observed()).toBe('exec-1');
+		});
+
+		it('switches the observation when the document displays another execution', () => {
+			storeExecution('exec-1', 'running');
+			storeExecution('exec-2', 'running');
+			const store = useWorkflowExecutionStateStore(documentId);
+			store.setDisplayedExecutionId('exec-1');
+
+			store.setDisplayedExecutionId('exec-2');
+
+			expect(observed()).toBe('exec-2');
+			expect(useExecutionWatchStore().documentsWatching('exec-1')).toEqual([]);
+		});
+
+		it('stops observing the moment the displayed execution ends', () => {
+			storeExecution('exec-1', 'running');
+			const store = useWorkflowExecutionStateStore(documentId);
+			store.setDisplayedExecutionId('exec-1');
+
+			useExecutionDataStore(createExecutionDataId('exec-1')).setExecution(
+				makeExecution({ id: 'exec-1', status: 'success', finished: true }),
+			);
+
+			expect(observed()).toBeUndefined();
+		});
+
+		it('stops observing when the document is reset or disposed', () => {
+			storeExecution('exec-1', 'running');
+			const store = useWorkflowExecutionStateStore(documentId);
+			store.setDisplayedExecutionId('exec-1');
+
+			store.resetExecutionState();
+			expect(observed()).toBeUndefined();
+
+			storeExecution('exec-2', 'running');
+			store.setDisplayedExecutionId('exec-2');
+			expect(observed()).toBe('exec-2');
+
+			disposeWorkflowExecutionStateStore(store);
+			expect(observed()).toBeUndefined();
+		});
+
+		it('does not bring a released execution data store back to life', () => {
+			storeExecution('exec-1', 'running');
+			const store = useWorkflowExecutionStateStore(documentId);
+			store.setDisplayedExecutionId('exec-1');
+
+			store.resetExecutionState();
+
+			expect(getActivePinia()?.state.value[`executionData/exec-1`]).toBeUndefined();
+		});
+
+		it('forgets the node shown as executing when the displayed execution changes', () => {
+			storeExecution('exec-1', 'running');
+			storeExecution('exec-2', 'running');
+			const store = useWorkflowExecutionStateStore(documentId);
+			store.setDisplayedExecutionId('exec-1');
+			store.executingNode.addExecutingNode('A', 57);
+
+			store.setDisplayedExecutionId('exec-2');
+
+			expect(store.executingNode.isNodeExecuting('A')).toBe(false);
+			// The new execution's numbering starts over and must be accepted.
+			store.executingNode.addExecutingNode('B', 0);
+			expect(store.executingNode.isNodeExecuting('B')).toBe(true);
+		});
+
+		it('keeps the node shown as executing while the displayed execution stays', () => {
+			storeExecution('exec-1', 'running');
+			const store = useWorkflowExecutionStateStore(documentId);
+			store.setDisplayedExecutionId('exec-1');
+			store.executingNode.addExecutingNode('A', 3);
+
+			store.setDisplayedExecutionId('exec-1');
+			useExecutionDataStore(createExecutionDataId('exec-1')).setExecution(
+				makeExecution({ id: 'exec-1', status: 'waiting' }),
+			);
+
+			expect(store.executingNode.isNodeExecuting('A')).toBe(true);
 		});
 	});
 

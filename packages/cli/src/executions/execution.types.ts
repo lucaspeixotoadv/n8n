@@ -39,6 +39,7 @@ export declare namespace ExecutionRequest {
 	type Retry = AuthenticatedRequest<RouteParams.ExecutionId, {}, { loadWorkflow?: boolean }, {}>;
 
 	type Stop = AuthenticatedRequest<RouteParams.ExecutionId>;
+	type Watch = AuthenticatedRequest<RouteParams.ExecutionId>;
 	type StopMany = AuthenticatedRequest<{}, {}, BodyParams.StopMany>;
 
 	type Update = AuthenticatedRequest<RouteParams.ExecutionId, {}, ExecutionUpdatePayload, {}>;

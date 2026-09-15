@@ -30,6 +30,7 @@ import type { ExecutionPersistence } from '@/executions/execution-persistence';
 import type { EngineV2ExecutionReader } from '@/executions/engine-v2-execution-reader.service';
 import type { ExecutionRedactionServiceProxy } from '@/executions/execution-redaction-proxy.service';
 import { ExecutionService } from '@/executions/execution.service';
+import type { ExecutionSnapshotService } from '@/executions/execution-snapshot.service';
 import type { ExecutionRequest } from '@/executions/execution.types';
 import type { EventService } from '@/events/event.service';
 import type { ExecutionStopService } from '@/scaling/execution-stop.service';
@@ -80,6 +81,8 @@ describe('ExecutionService', () => {
 		executionStopService,
 		ownershipService,
 		engineV2ExecutionReader,
+		// Returns the execution unchanged; the merge itself is covered by its own tests.
+		mock<ExecutionSnapshotService>({ complete: async (execution) => execution }),
 	);
 
 	beforeEach(() => {
@@ -259,6 +262,7 @@ describe('ExecutionService', () => {
 				executionStopService,
 				ownershipService,
 				mock(),
+				mock<ExecutionSnapshotService>({ complete: async (execution) => execution }),
 			);
 
 			const mockUser = mock<User>({ id: 'user-1' });
@@ -344,6 +348,7 @@ describe('ExecutionService', () => {
 				redactionProxy,
 				mock(),
 				ownershipService,
+				mock(),
 				mock(),
 			);
 

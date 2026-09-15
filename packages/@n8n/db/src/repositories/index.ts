@@ -61,6 +61,7 @@ export {
 	type PollerFailureState,
 	type PollerFullState,
 } from './poller-state.repository';
+export { ExecutionNodeRunRepository } from './execution-node-run.repository';
 export { ProcessedDataRepository } from './processed-data.repository';
 export { SettingsRepository } from './settings.repository';
 export { TagRepository } from './tag.repository';

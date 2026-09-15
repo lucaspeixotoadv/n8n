@@ -1,4 +1,4 @@
-import { Logger } from '@n8n/backend-common';
+import { LicenseState, Logger } from '@n8n/backend-common';
 import type { User } from '@n8n/db';
 import { ExecutionRepository, UserRepository } from '@n8n/db';
 import { LifecycleMetadata } from '@n8n/decorators';
@@ -41,6 +41,8 @@ import { WorkflowStaticDataService } from '@/workflows/workflow-static-data.serv
 // eslint-disable-next-line import-x/no-cycle
 import { executeErrorWorkflow } from './execute-error-workflow';
 import { restoreBinaryDataId } from './restore-binary-data-id';
+import { ExecutionJournalService } from './execution-journal.service';
+import { nodeEventSequence } from './node-event-sequence';
 import { saveExecutionProgress } from './save-execution-progress';
 import {
 	determineFinalExecutionStatus,
@@ -277,11 +279,14 @@ function hookFunctionsPush(
 	userId?: string,
 	source?: IWorkflowExecutionDataProcess['source'],
 ) {
-	if (!pushRef) return;
+	// No `pushRef` gate: events are addressed to the execution, not to the session that
+	// started it, so a production run is observable by whoever has it open. With nobody
+	// watching and no originating session, sending is a map lookup that delivers nothing.
 	const logger = Container.get(Logger);
 	const pushInstance = Container.get(Push);
 	const redactionProxy = Container.get(ExecutionRedactionServiceProxy);
 	const userRepository = Container.get(UserRepository);
+	const licenseState = Container.get(LicenseState);
 
 	// Lazy user resolution — resolved once, reused across all node events in this execution
 	let resolvedUser: User | null | undefined; // undefined = not yet resolved
@@ -293,14 +298,17 @@ function hookFunctionsPush(
 		return resolvedUser;
 	}
 
-	// Monotonic counter over this execution segment's node-event pushes so the UI
-	// can order events that arrive late or out of order (e.g. after a suspended
-	// background tab resumes) and render only the latest node as executing
-	// (CAT-2895). Assigned in engine order here on the instance running the
-	// workflow; it rides the worker→main pubsub relay unchanged. Scoped to a
-	// segment: this closure is per run, so a waiting-execution (Wait/Form node)
-	// resume rebuilds the hooks and restarts the counter at 0.
-	let nodeEventSequence = 0;
+	/**
+	 * Whether run data may be pushed without a user to redact it for.
+	 *
+	 * Redaction is evaluated per reader, and a run started by a trigger has no reader to
+	 * evaluate it for, so its data is withheld — but only where there is a redaction policy
+	 * to withhold it under. An unlicensed instance never redacts, so withholding there would
+	 * keep every watcher of a production run from seeing what it produces, for nothing.
+	 */
+	function mayPushUnredacted(): boolean {
+		return !licenseState.isDataRedactionLicensed();
+	}
 
 	hooks.addHandler('nodeExecuteBefore', function (nodeName, data) {
 		const { executionId } = this;
@@ -312,10 +320,16 @@ function hookFunctionsPush(
 			workflowId: this.workflowData.id,
 		});
 
-		pushInstance.send(
+		pushInstance.sendToExecution(
+			executionId,
 			{
 				type: 'nodeExecuteBefore',
-				data: { executionId, nodeName, sequenceNumber: nodeEventSequence++, data },
+				data: {
+					executionId,
+					nodeName,
+					sequenceNumber: nodeEventSequence(data.executionIndex, 'started'),
+					data,
+				},
 			},
 			pushRef,
 		);
@@ -332,13 +346,14 @@ function hookFunctionsPush(
 		const itemCountByConnectionType = getItemCountByConnectionType(data?.data);
 		const { data: _, ...taskData } = data;
 
-		pushInstance.send(
+		pushInstance.sendToExecution(
+			executionId,
 			{
 				type: 'nodeExecuteAfter',
 				data: {
 					executionId,
 					nodeName,
-					sequenceNumber: nodeEventSequence++,
+					sequenceNumber: nodeEventSequence(data.executionIndex, 'finished'),
 					itemCountByConnectionType,
 					data: taskData,
 				},
@@ -346,10 +361,14 @@ function hookFunctionsPush(
 			pushRef,
 		);
 
+		// Redaction is work per node; skip it, and the data push it prepares, when the
+		// event has nobody to reach — the common case for a run nobody has open.
+		if (!pushInstance.hasRecipients(executionId, pushRef)) return;
+
 		// Fail-closed redaction: if user cannot be resolved, skip the data push
 		// entirely rather than sending unredacted data to the client.
 		const user = await getUser();
-		if (!user) {
+		if (!user && !mayPushUnredacted()) {
 			logger.warn('Skipping execution data push: unable to resolve user for redaction', {
 				executionId,
 				nodeName,
@@ -364,22 +383,24 @@ function hookFunctionsPush(
 		// Fail-closed: if redaction throws, skip the data push rather than
 		// sending unredacted data. The metadata-only push above already fired.
 		let dataToSend = data;
-		try {
-			const dummy = buildRedactableExecution(this, { [nodeName]: [data] }, executionData);
-			const result = await redactionProxy.processExecution(dummy, {
-				user,
-				keepOriginal: true,
-			});
-			if (result !== dummy) {
-				dataToSend = result.data.resultData.runData[nodeName][0];
+		if (user) {
+			try {
+				const dummy = buildRedactableExecution(this, { [nodeName]: [data] }, executionData);
+				const result = await redactionProxy.processExecution(dummy, {
+					user,
+					keepOriginal: true,
+				});
+				if (result !== dummy) {
+					dataToSend = result.data.resultData.runData[nodeName][0];
+				}
+			} catch (error) {
+				logger.error('Failed to redact push data, skipping nodeExecuteAfterData', {
+					executionId,
+					nodeName,
+					error,
+				});
+				return;
 			}
-		} catch (error) {
-			logger.error('Failed to redact push data, skipping nodeExecuteAfterData', {
-				executionId,
-				nodeName,
-				error,
-			});
-			return;
 		}
 
 		// We send the node execution data as a WS binary message to the FE. Not
@@ -389,7 +410,8 @@ function hookFunctionsPush(
 		// and we can pass it directly to a web worker for processing without
 		// extra copies.
 		const asBinary = true;
-		pushInstance.send(
+		pushInstance.sendToExecution(
+			executionId,
 			{
 				type: 'nodeExecuteAfterData',
 				data: { executionId, nodeName, itemCountByConnectionType, data: dataToSend },
@@ -410,9 +432,12 @@ function hookFunctionsPush(
 		// Apply copy-on-write redaction to flattedRunData when retrying/resuming.
 		// Fail-closed: if user cannot be resolved or redaction throws, send
 		// empty runData rather than skipping the push or leaking unredacted data.
-		const user = await getUser();
+		// Redaction is only worth its cost when the event has somebody to reach.
+		const hasRecipients = pushInstance.hasRecipients(executionId, pushRef);
+		const user = hasRecipients ? await getUser() : null;
 		let runDataToStringify: IRunData = {};
-		const hasRunData = data?.resultData.runData && Object.keys(data.resultData.runData).length > 0;
+		const hasRunData =
+			hasRecipients && data?.resultData.runData && Object.keys(data.resultData.runData).length > 0;
 
 		if (hasRunData && user) {
 			try {
@@ -431,7 +456,9 @@ function hookFunctionsPush(
 				});
 				// runDataToStringify stays {} — fail closed
 			}
-		} else if (hasRunData && !user) {
+		} else if (hasRunData && mayPushUnredacted()) {
+			runDataToStringify = data?.resultData.runData ?? {};
+		} else if (hasRunData) {
 			logger.warn('Cannot redact execution start data: unable to resolve user', {
 				executionId,
 				workflowId,
@@ -441,7 +468,8 @@ function hookFunctionsPush(
 		}
 
 		// Always send executionStarted so the editor can initialise the execution UI
-		pushInstance.send(
+		pushInstance.sendToExecution(
+			executionId,
 			{
 				type: 'executionStarted',
 				data: {
@@ -469,9 +497,14 @@ function hookFunctionsPush(
 
 		const { status } = fullRunData;
 		if (status === 'waiting') {
-			pushInstance.send({ type: 'executionWaiting', data: { executionId, source } }, pushRef);
+			pushInstance.sendToExecution(
+				executionId,
+				{ type: 'executionWaiting', data: { executionId, source } },
+				pushRef,
+			);
 		} else {
-			pushInstance.send(
+			pushInstance.sendToExecution(
+				executionId,
 				{ type: 'executionFinished', data: { executionId, workflowId, status, source } },
 				pushRef,
 			);
@@ -511,6 +544,45 @@ function hookFunctionsSaveProgress(
 			data,
 			executionData,
 		);
+	});
+}
+
+/**
+ * Records each node run as it starts and as it finishes, and releases the records once the
+ * execution's own snapshot covers them.
+ *
+ * Registered before the push hooks on purpose: a node event is durable before it is live,
+ * so a session that subscribes to the execution and reads the journal sees every event it
+ * was not yet around to receive.
+ *
+ * This is what makes an unfinished execution readable: its `data` is only written when the
+ * run ends, so without a journal a run that is still going — or one that died before that
+ * final write — says nothing about how far it got. Unlike `hookFunctionsSaveProgress`,
+ * which rewrites the entire execution after every node, this appends one row per run — but
+ * it is still a write per node, so each workflow decides, like progress saving itself.
+ */
+function hookFunctionsJournal(
+	hooks: ExecutionLifecycleHooks,
+	{ saveSettings }: HooksSetupParameters,
+) {
+	if (!saveSettings.liveProgress) return;
+
+	const journal = Container.get(ExecutionJournalService);
+
+	hooks.addHandler('nodeExecuteBefore', async function (nodeName, data) {
+		await journal.recordNodeStart(this.executionId, nodeName, data);
+	});
+
+	hooks.addHandler('nodeExecuteAfter', async function (nodeName, data, executionData) {
+		await journal.recordNodeRun(this.executionId, nodeName, data, executionData);
+	});
+
+	hooks.addHandler('workflowExecuteAfter', async function (fullRunData) {
+		// A parked run keeps its journal: it has not been consolidated yet, and the resume
+		// continues appending to the same order.
+		if (fullRunData.status === 'waiting') return;
+
+		await journal.forget(this.executionId);
 	});
 }
 
@@ -669,11 +741,12 @@ function hookFunctionsSave(
 				executionId: this.executionId,
 				workflowId: this.workflowData.id,
 				executionData: fullExecutionData,
-				// A completed run must never overwrite a status the user already canceled. This applies
-				// to every save path that runs this hook; the case that motivated it is a subworkflow
-				// stopped in queue mode, where the worker keeps running the child to completion after
-				// the cancel and would otherwise write `success` over `canceled`.
-				conditions: { requireNotCanceled: true },
+				// A completed run must never overwrite a status the user already canceled — the
+				// case that motivated it is a subworkflow stopped in queue mode, where the worker
+				// keeps running the child to completion after the cancel. Only the *status* is
+				// protected: this write carries the run data, which is strictly more complete
+				// than anything already stored, and is the only account a cancelled run has.
+				conditions: { preserveCancellation: true },
 			});
 
 			await updateExistingExecutionMetadata(
@@ -810,6 +883,10 @@ export function getLifecycleHooksForSubExecutions(
 	hookFunctionsFinalizeExecutionStatus(hooks);
 	hookFunctionsSave(hooks, { saveSettings, parentExecution });
 	hookFunctionsSaveProgress(hooks, { saveSettings });
+	hookFunctionsJournal(hooks, { saveSettings });
+	// A sub-execution has no originating session, but it can be opened from its parent and
+	// is then observable like any other run.
+	hookFunctionsPush(hooks, { saveSettings }, userId);
 	hookFunctionsStatistics(hooks);
 	hookFunctionsExternalHooks(hooks);
 	Container.get(ModulesHooksRegistry).addHooks(hooks);
@@ -853,10 +930,14 @@ export function getLifecycleHooksForScalingWorker(
 	hookFunctionsFinalizeExecutionStatus(hooks);
 	hookFunctionsSaveWorker(hooks, optionalParameters);
 	hookFunctionsSaveProgress(hooks, optionalParameters);
+	hookFunctionsJournal(hooks, optionalParameters);
 	hookFunctionsStatistics(hooks, source);
 	hookFunctionsExternalHooks(hooks, source);
 
-	if (executionMode === 'manual' && Container.get(InstanceSettings).isWorker) {
+	// Every mode, not just manual: a production run is observable by whoever has it open, and
+	// only the instance running it can report what it is doing. A worker relays via pubsub,
+	// which costs nothing when no main holds a watcher.
+	if (Container.get(InstanceSettings).isWorker) {
 		hookFunctionsPush(hooks, optionalParameters, data.userId, data.source);
 	}
 
@@ -896,6 +977,7 @@ export function getLifecycleHooksForScalingMain(
 
 	hookFunctionsWorkflowEvents(hooks, userId, projectId, projectName, source, telemetryMetadata);
 	hookFunctionsSaveProgress(hooks, optionalParameters);
+	hookFunctionsJournal(hooks, optionalParameters);
 	hookFunctionsExternalHooks(hooks, source);
 	hookFunctionsFinalizeExecutionStatus(hooks);
 
@@ -990,8 +1072,9 @@ export function getLifecycleHooksForRegularMain(
 	hookFunctionsNodeEvents(hooks);
 	hookFunctionsFinalizeExecutionStatus(hooks);
 	hookFunctionsSave(hooks, optionalParameters);
-	hookFunctionsPush(hooks, optionalParameters, userId, source);
 	hookFunctionsSaveProgress(hooks, optionalParameters);
+	hookFunctionsJournal(hooks, optionalParameters);
+	hookFunctionsPush(hooks, optionalParameters, userId, source);
 	hookFunctionsStatistics(hooks, source);
 	hookFunctionsExternalHooks(hooks, source);
 	Container.get(ModulesHooksRegistry).addHooks(hooks, source);

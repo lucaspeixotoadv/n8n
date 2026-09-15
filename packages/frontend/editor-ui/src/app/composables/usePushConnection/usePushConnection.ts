@@ -14,12 +14,14 @@ import {
 	nodeExecuteAfter,
 	nodeExecuteAfterData,
 	executionStarted,
+	executionSnapshot,
 	sendWorkerStatusMessage,
 	sendConsoleMessage,
 	workflowFailedToActivate,
 	workflowPartiallyActivated,
 	executionFinished,
 	executionRecovered,
+	executionWaiting,
 	workflowActivated,
 	workflowDeactivated,
 	workflowAutoDeactivated,
@@ -96,6 +98,8 @@ export function usePushConnection({ router }: { router: ReturnType<typeof useRou
 				return await nodeExecuteAfterData(event, options);
 			case 'executionStarted':
 				return await executionStarted(event, options);
+			case 'executionSnapshot':
+				return await executionSnapshot(event, options);
 			case 'sendWorkerStatusMessage':
 				return await sendWorkerStatusMessage(event);
 			case 'sendConsoleMessage':
@@ -108,6 +112,8 @@ export function usePushConnection({ router }: { router: ReturnType<typeof useRou
 				return await executionFinished(event, options);
 			case 'executionRecovered':
 				return await executionRecovered(event, options);
+			case 'executionWaiting':
+				return await executionWaiting(event, options);
 			case 'workflowActivated':
 				return await workflowActivated(event, options);
 			case 'workflowDeactivated':
