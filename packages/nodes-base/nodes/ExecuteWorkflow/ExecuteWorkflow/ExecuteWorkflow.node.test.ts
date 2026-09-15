@@ -103,6 +103,60 @@ describe('ExecuteWorkflow', () => {
 		);
 	});
 
+	test('should publish the LLM usage of the sub-executions in "each" mode', async () => {
+		const usageOf = (totalTokens: number) => ({
+			invocations: 1,
+			tokens: {
+				promptTokens: totalTokens,
+				completionTokens: 0,
+				totalTokens,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				reasoningTokens: 0,
+			},
+			tokensEstimated: false,
+			tokensComplete: true,
+			cost: { amount: totalTokens / 1000, currency: 'USD' as const },
+			costComplete: true,
+		});
+		executeFunctions.getNodeParameter
+			.mockReturnValueOnce('database') // source
+			.mockReturnValueOnce('each') // mode
+			.mockReturnValueOnce({}) // workflowInputs.value (item 0)
+			.mockReturnValueOnce({}) // workflowInputs.value (item 1)
+			.mockReturnValueOnce([]) // workflowInputs.schema
+			.mockReturnValueOnce(true) // waitForSubWorkflow (item 0)
+			.mockReturnValueOnce(true); // waitForSubWorkflow (item 1)
+		executeFunctions.getInputData.mockReturnValue([{ json: { key: 'a' } }, { json: { key: 'b' } }]);
+		(getWorkflowInfo as Mock).mockResolvedValue({ id: 'subWorkflowId' });
+		(executeFunctions.executeWorkflow as Mock)
+			.mockResolvedValueOnce({
+				executionId: 'sub-1',
+				data: [[{ json: {} }]],
+				llmUsage: usageOf(100),
+			})
+			.mockResolvedValueOnce({
+				executionId: 'sub-2',
+				data: [[{ json: {} }]],
+				llmUsage: usageOf(50),
+			});
+
+		await executeWorkflow.execute.call(executeFunctions);
+
+		expect(executeFunctions.setMetadata).toHaveBeenCalledWith({
+			subExecutionsCount: 2,
+			llmUsage: {
+				own: expect.objectContaining({ invocations: 0 }),
+				subagents: expect.objectContaining({
+					invocations: 2,
+					tokens: expect.objectContaining({ totalTokens: 150 }),
+					cost: { amount: expect.closeTo(0.15, 6), currency: 'USD' },
+				}),
+				total: expect.objectContaining({ invocations: 2 }),
+			},
+		});
+	});
+
 	test('should execute workflow in "once" mode and not wait for sub-workflow completion', async () => {
 		executeFunctions.getNodeParameter
 			.mockReturnValueOnce('database') // source

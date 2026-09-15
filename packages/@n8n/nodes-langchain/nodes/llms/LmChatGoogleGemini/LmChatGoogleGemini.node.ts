@@ -12,6 +12,7 @@ import type {
 
 import { getAdditionalOptions } from '../gemini-common/additional-options';
 import { N8nChatGoogleGenerativeAI } from '../gemini-common/n8n-chat-google-generative-ai';
+import { geminiTokensUsageParser } from '../gemini-common/tokens-usage-parser';
 import {
 	makeN8nLlmFailedAttemptHandler,
 	N8nLlmTracing,
@@ -183,7 +184,12 @@ export class LmChatGoogleGemini implements INodeType {
 			temperature: options.temperature,
 			maxOutputTokens: options.maxOutputTokens,
 			safetySettings,
-			callbacks: [new N8nLlmTracing(this, { errorDescriptionMapper })],
+			callbacks: [
+				new N8nLlmTracing(this, {
+					errorDescriptionMapper,
+					tokensUsageParser: geminiTokensUsageParser,
+				}),
+			],
 			onFailedAttempt: makeN8nLlmFailedAttemptHandler(this),
 		};
 

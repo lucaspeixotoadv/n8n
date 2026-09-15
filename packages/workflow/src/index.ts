@@ -45,6 +45,7 @@ export * from './n8n-oauth2-auth';
 export * from './auth-redaction';
 export * from './node-reference-parser-utils';
 export * from './metadata-utils';
+export * from './llm-usage';
 export * from './highlighted-data';
 export * from './workflow';
 export * from './workflow-checksum';

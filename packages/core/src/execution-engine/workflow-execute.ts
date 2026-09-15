@@ -70,6 +70,7 @@ import { assertExecutionDataExists } from '@/utils/assertions';
 
 import { establishExecutionContext } from './execution-context';
 import type { ExecutionLifecycleHooks } from './execution-lifecycle-hooks';
+import { stampLlmUsage } from './llm-usage-stamp';
 import {
 	ExecuteContext,
 	getAdditionalKeys,
@@ -2009,6 +2010,7 @@ export class WorkflowExecute {
 	 * the stack so it can be restarted, and the loop must stop.
 	 */
 	private async handleNodeExecutionError({
+		workflow,
 		executionNode,
 		executionData,
 		taskData,
@@ -2017,6 +2019,7 @@ export class WorkflowExecute {
 		runIndex,
 		hooks,
 	}: {
+		workflow: Workflow;
 		executionNode: INode;
 		executionData: IExecuteData;
 		taskData: ITaskData;
@@ -2079,6 +2082,13 @@ export class WorkflowExecute {
 			} as ITaskDataConnections;
 		}
 
+		stampLlmUsage(
+			workflow,
+			this.runExecutionData.resultData.runData,
+			executionNode.name,
+			runIndex,
+			taskData,
+		);
 		this.upsertTaskData(executionNode.name, runIndex, taskData);
 
 		// Add the execution data again so that it can get restarted
@@ -2407,6 +2417,7 @@ export class WorkflowExecute {
 
 					if (executionError !== undefined) {
 						const outcome = await this.handleNodeExecutionError({
+							workflow,
 							executionNode,
 							executionData,
 							taskData,
@@ -2431,6 +2442,13 @@ export class WorkflowExecute {
 					// Rewire output data log to the given connectionType
 					this.rewireOutputLog(executionNode, taskData, nodeSuccessData!, runIndex);
 
+					stampLlmUsage(
+						workflow,
+						this.runExecutionData.resultData.runData,
+						executionNode.name,
+						runIndex,
+						taskData,
+					);
 					this.upsertTaskData(executionNode.name, runIndex, taskData);
 
 					if (this.runExecutionData.waitTill) {

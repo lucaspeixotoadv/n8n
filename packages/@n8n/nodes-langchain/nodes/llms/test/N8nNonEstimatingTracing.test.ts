@@ -87,3 +87,46 @@ describe('N8nNonEstimatingTracing', () => {
 		});
 	});
 });
+
+describe('N8nNonEstimatingTracing parent run pinning', () => {
+	const serialized: Serialized = { lc: 1, type: 'constructor', id: ['test'], kwargs: {} };
+
+	it('reports the run it opened so a parent can pin it on the child tracers', async () => {
+		const onRunStarted = vi.fn();
+		const executionFunctions = mock<ISupplyDataFunctions>({
+			addInputData: vi.fn().mockReturnValue({ index: 4 }),
+			getNextRunIndex: vi.fn().mockReturnValue(4),
+		});
+		const tracer = new N8nNonEstimatingTracing(executionFunctions, { onRunStarted });
+
+		await tracer.handleLLMStart(serialized, ['hello'], 'run-9');
+
+		expect(onRunStarted).toHaveBeenCalledWith('run-9', 4);
+	});
+
+	it('points its own run to the parent run pinned for the invocation', async () => {
+		const executionFunctions = mock<ISupplyDataFunctions>({
+			addInputData: vi.fn().mockReturnValue({ index: 1 }),
+			addOutputData: vi.fn(),
+			getNextRunIndex: vi.fn().mockReturnValue(1),
+		});
+		const tracer = new N8nNonEstimatingTracing(executionFunctions);
+		tracer.setParentRunIndexForRun('run-9', 7);
+
+		await tracer.handleLLMStart(serialized, ['hello'], 'run-9');
+		await tracer.handleLLMEnd({ generations: [[{ text: 'ok' }]] }, 'run-9');
+
+		expect(executionFunctions.addInputData).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.any(Array),
+			7,
+		);
+		expect(executionFunctions.addOutputData).toHaveBeenCalledWith(
+			expect.anything(),
+			1,
+			expect.any(Array),
+			undefined,
+			7,
+		);
+	});
+});

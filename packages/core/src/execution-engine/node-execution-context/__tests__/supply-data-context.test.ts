@@ -401,6 +401,103 @@ describe('SupplyDataContext', () => {
 		});
 	});
 
+	describe('LLM usage publication', () => {
+		it('publishes the aggregate of a sub-agent run before its parent is notified', async () => {
+			const mockHooks = { runHook: vi.fn().mockResolvedValue(undefined) };
+			const testAdditionalData = mock<IWorkflowExecuteAdditionalData>({
+				credentialsHelper,
+				hooks: mockHooks,
+				currentNodeExecutionIndex: 0,
+			});
+			const subAgentNode = mock<INode>({ name: 'Sub Agent' });
+			const agentNode = mock<INode>({ name: 'Agent' });
+			const subAgentWorkflow = mock<Workflow>({
+				expression,
+				nodeTypes,
+				connectionsByDestinationNode: {
+					'Sub Agent': { [NodeConnectionTypes.AiLanguageModel]: [] },
+				},
+			});
+			const testRunExecutionData = mock<IRunExecutionData>({
+				resultData: {
+					runData: {
+						// The sub-agent's model already ran, pointing to run 0 of the sub-agent
+						'Sub Agent Model': [
+							{
+								startTime: 0,
+								executionTime: 0,
+								executionIndex: 1,
+								source: [{ previousNode: 'Sub Agent', previousNodeRun: 0 }],
+								data: {
+									[NodeConnectionTypes.AiLanguageModel]: [
+										[
+											{
+												json: {
+													tokenUsage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
+													cost: { amount: 0.02, currency: 'USD', source: 'catalog' },
+												},
+											},
+										],
+									],
+								},
+							},
+						],
+						'Sub Agent': [
+							{
+								startTime: Date.now(),
+								executionTime: 0,
+								executionIndex: 0,
+								executionStatus: 'running',
+								source: [{ previousNode: 'Agent', previousNodeRun: 0 }],
+							},
+						],
+					},
+					error: undefined,
+				},
+				executionData: { metadata: {} },
+			});
+			const context = new SupplyDataContext(
+				subAgentWorkflow,
+				subAgentNode,
+				testAdditionalData,
+				mode,
+				testRunExecutionData,
+				0,
+				connectionInputData,
+				{},
+				NodeConnectionTypes.AiTool,
+				executeData,
+				[closeFn],
+				abortSignal,
+				agentNode,
+			);
+
+			await context.addExecutionDataFunctions(
+				'output',
+				[[{ json: { response: 'done' } }]],
+				NodeConnectionTypes.AiTool,
+				subAgentNode.name,
+				0,
+			);
+
+			const taskData = testRunExecutionData.resultData.runData['Sub Agent'][0];
+			expect(taskData.source).toEqual([{ previousNode: 'Agent', previousNodeRun: 0 }]);
+			expect(taskData.metadata?.llmUsage).toMatchObject({
+				own: { invocations: 1, tokens: { totalTokens: 40 }, cost: { amount: 0.02 } },
+				subagents: { invocations: 0 },
+				total: { invocations: 1, tokens: { totalTokens: 40 }, costComplete: true },
+			});
+			// The hook receives the task data with the aggregate already on it
+			expect(mockHooks.runHook).toHaveBeenCalledWith('nodeExecuteAfter', [
+				subAgentNode.name,
+				expect.objectContaining({
+					metadata: expect.objectContaining({ llmUsage: expect.any(Object) }),
+				}),
+				testRunExecutionData,
+			]);
+		});
+	});
+
 	describe('addExecutionHints', () => {
 		it('should add single hint to context', () => {
 			const testContext = new SupplyDataContext(

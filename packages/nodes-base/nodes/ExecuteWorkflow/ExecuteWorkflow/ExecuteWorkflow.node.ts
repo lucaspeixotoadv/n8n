@@ -1,4 +1,11 @@
-import { NodeConnectionTypes, NodeOperationError, parseErrorMetadata } from 'n8n-workflow';
+import {
+	addLlmUsageSummaries,
+	emptyLlmUsageSummary,
+	llmUsageAggregateFromSubtree,
+	NodeConnectionTypes,
+	NodeOperationError,
+	parseErrorMetadata,
+} from 'n8n-workflow';
 import type {
 	ExecuteWorkflowData,
 	IExecuteFunctions,
@@ -372,6 +379,7 @@ workflowInputs: {
 
 		if (mode === 'each') {
 			const returnData: INodeExecutionData[][] = [];
+			let subExecutionsLlmUsage = emptyLlmUsageSummary();
 
 			for (let i = 0; i < items.length; i++) {
 				try {
@@ -397,6 +405,12 @@ workflowInputs: {
 							},
 						);
 						const workflowResult = executionResult.data as INodeExecutionData[][];
+						if (executionResult.llmUsage) {
+							subExecutionsLlmUsage = addLlmUsageSummaries(
+								subExecutionsLlmUsage,
+								executionResult.llmUsage,
+							);
+						}
 
 						for (const [outputIndex, outputData] of workflowResult.entries()) {
 							for (const item of outputData) {
@@ -473,6 +487,9 @@ workflowInputs: {
 
 			this.setMetadata({
 				subExecutionsCount: items.length,
+				...(subExecutionsLlmUsage.invocations > 0 && {
+					llmUsage: llmUsageAggregateFromSubtree(subExecutionsLlmUsage),
+				}),
 			});
 
 			return returnData;
@@ -506,6 +523,10 @@ workflowInputs: {
 						workflowId: workflowInfo.id ?? (workflowProxy.$workflow.id as string),
 					},
 					subExecutionsCount: 1,
+					// Usage of the sub-workflow's agents rolls up into whatever aggregates this run
+					...(executionResult.llmUsage && {
+						llmUsage: llmUsageAggregateFromSubtree(executionResult.llmUsage),
+					}),
 				});
 
 				if (!waitForSubWorkflow) {

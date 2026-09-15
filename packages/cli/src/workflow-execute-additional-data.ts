@@ -46,6 +46,7 @@ import {
 	mergeRunsPerBranch,
 	attachDynamicCredentialsUsage,
 	summarizeDynamicCredentialsUsage,
+	summarizeExecutionLlmUsage,
 } from 'n8n-workflow';
 
 import { ActiveExecutions } from '@/active-executions';
@@ -698,10 +699,15 @@ async function startExecution(
 
 		activeExecutions.finalizeExecution(executionId, data);
 
+		// The caller publishes the sub-execution's LLM usage on its own run, so a sub-workflow's
+		// agents roll up into the parent's aggregates without the parent reading another execution.
+		const llmUsage = summarizeExecutionLlmUsage(data.data.resultData.runData);
+
 		return {
 			executionId,
 			data: buildSubWorkflowOutput(data, workflowData.nodes, options.returnLastRunOnly ?? false),
 			waitTill: data.waitTill,
+			...(llmUsage.invocations > 0 && { llmUsage }),
 			// Report private-credential usage to the caller (detached runs return earlier, skipping this).
 			...summarizeDynamicCredentialsUsage(data.data),
 		};

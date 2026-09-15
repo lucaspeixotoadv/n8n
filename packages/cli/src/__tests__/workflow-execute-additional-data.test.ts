@@ -205,6 +205,37 @@ describe('WorkflowExecuteAdditionalData', () => {
 			});
 		});
 
+		it('should return the LLM usage of the sub-execution when its runs published some', async () => {
+			const usage = {
+				invocations: 2,
+				tokens: {
+					promptTokens: 300,
+					completionTokens: 40,
+					totalTokens: 340,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					reasoningTokens: 0,
+				},
+				tokensEstimated: false,
+				tokensComplete: true,
+				cost: { amount: 0.02, currency: 'USD' as const },
+				costComplete: true,
+			};
+			const runWithUsage = getMockRun({ lastNodeOutput: [[{ json: { test: 1 } }]] });
+			runWithUsage.data.resultData.runData[LAST_NODE_EXECUTED][0].metadata = {
+				llmUsage: { own: usage, subagents: usage, total: usage },
+			};
+			processRunExecutionData.mockReturnValue(getCancelablePromise(runWithUsage));
+
+			const response = await executeWorkflow(
+				mock<IExecuteWorkflowInfo>(),
+				mock<IWorkflowExecuteAdditionalData>(),
+				mock<ExecuteWorkflowOptions>({ loadedWorkflowData: undefined, doNotWaitToFinish: false }),
+			);
+
+			expect(response.llmUsage).toEqual(usage);
+		});
+
 		it('should execute workflow, skip waiting', async () => {
 			const response = await executeWorkflow(
 				mock<IExecuteWorkflowInfo>(),
