@@ -30,7 +30,11 @@ import { defineStore } from 'pinia';
 import { useCredentialsStore } from '@/features/credentials/credentials.store';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import * as utils from '@/app/utils/credentialOnlyNodes';
-import { groupNodeTypesByNameAndType } from '@/app/utils/nodeTypes/nodeTypeTransforms';
+import {
+	groupNodeTypesByNameAndType,
+	isToolNodeType,
+	nodeTypeHasOutput,
+} from '@/app/utils/nodeTypes/nodeTypeTransforms';
 import { computed, shallowRef } from 'vue';
 import { useActionsGenerator } from '@/features/shared/nodeCreator/composables/useActionsGeneration';
 import { removePreviewToken } from '@/features/shared/nodeCreator/nodeCreator.utils';
@@ -185,35 +189,12 @@ export const useNodeTypesStore = defineStore(STORES.NODE_TYPES, () => {
 	});
 
 	const isToolNode = computed(() => {
-		return (nodeTypeName: string) => {
-			const nodeType = getNodeType.value(nodeTypeName);
-			if (nodeType?.outputs && Array.isArray(nodeType.outputs)) {
-				const outputTypes = nodeType.outputs.map(
-					(output: NodeConnectionType | INodeOutputConfiguration) =>
-						typeof output === 'string' ? output : output.type,
-				);
-
-				return outputTypes.includes(NodeConnectionTypes.AiTool);
-			} else {
-				return nodeType?.outputs.includes(NodeConnectionTypes.AiTool) ?? false;
-			}
-		};
+		return (nodeTypeName: string) => isToolNodeType(getNodeType.value(nodeTypeName));
 	});
 
 	const isModelNode = computed(() => {
-		return (nodeTypeName: string) => {
-			const nodeType = getNodeType.value(nodeTypeName);
-			if (nodeType?.outputs && Array.isArray(nodeType.outputs)) {
-				const outputTypes = nodeType.outputs.map(
-					(output: NodeConnectionType | INodeOutputConfiguration) =>
-						typeof output === 'string' ? output : output.type,
-				);
-
-				return outputTypes.includes(NodeConnectionTypes.AiLanguageModel);
-			} else {
-				return nodeType?.outputs.includes(NodeConnectionTypes.AiLanguageModel) ?? false;
-			}
-		};
+		return (nodeTypeName: string) =>
+			nodeTypeHasOutput(getNodeType.value(nodeTypeName), NodeConnectionTypes.AiLanguageModel);
 	});
 
 	const isCoreNodeType = computed(() => {

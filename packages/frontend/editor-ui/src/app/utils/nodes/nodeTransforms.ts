@@ -5,7 +5,11 @@ import {
 	WIKIPEDIA_TOOL_NODE_TYPE,
 } from '@/app/constants';
 import type { INodeUi } from '@/Interface';
-import type { NodeTypeProvider } from '@/app/utils/nodeTypes/nodeTypeTransforms';
+import {
+	getDefaultOnError,
+	isToolNodeType,
+	type NodeTypeProvider,
+} from '@/app/utils/nodeTypes/nodeTypeTransforms';
 import type {
 	INodeCredentialDescription,
 	INodeCredentials,
@@ -309,7 +313,10 @@ export function serializeNode(nodeTypeProvider: NodeTypeProvider, node: INodeUi)
 	if (node.continueOnFail === true) {
 		nodeData.continueOnFail = true;
 	}
-	if (node.onError !== undefined && node.onError !== null && node.onError !== 'stopWorkflow') {
+	// `onError` is stored only when it differs from what the node runs with anyway: a tool
+	// continues by default and every other node stops, so the default of each is the absence.
+	const defaultOnError = getDefaultOnError(isToolNodeType(nodeType));
+	if (node.onError !== undefined && node.onError !== null && node.onError !== defaultOnError) {
 		nodeData.onError = node.onError;
 	}
 	// Save the notes only if when they contain data
