@@ -31,6 +31,7 @@ import { isPresent } from '@/app/utils/typesUtils';
 import { setParameterValue } from '@/app/utils/parameterUtils';
 import type { Ref } from 'vue';
 import { omitKey } from '@/app/utils/objectUtils';
+import { getDefaultOnError } from '@/app/utils/nodeTypes/nodeTypeTransforms';
 import type { BaseTextKey } from '@n8n/i18n';
 
 export interface ParameterOptionsOverrides {
@@ -454,14 +455,77 @@ export function shouldSkipParamValidation(
 	);
 }
 
+/**
+ * Which node-level settings a node gets.
+ *
+ * - `node`: every setting.
+ * - `tool`: what the engine reads for a node that runs as an agent tool: retry and
+ *   `onError`. A tool has no main input to pass through and no second output, so the
+ *   settings that need one are left out, and `onError` offers only the two behaviours the
+ *   tool execution distinguishes.
+ * - `subNode`: notes only, for sub-nodes whose execution settings the engine never reads.
+ */
+export type CommonNodeSettingsKind = 'node' | 'tool' | 'subNode';
+
+function createOnErrorSetting(kind: 'node' | 'tool', t: (key: BaseTextKey) => string) {
+	const setting: INodeProperties = {
+		displayName: t('nodeSettings.onError.displayName'),
+		name: 'onError',
+		type: 'options',
+		options: [],
+		default: getDefaultOnError(kind === 'tool'),
+		description: t('nodeSettings.onError.description'),
+		noDataExpression: true,
+		isNodeSetting: true,
+	};
+
+	if (kind === 'tool') {
+		// The order puts the default first. `continueErrorOutput` is not offered: a tool has
+		// one output, the agent, and the engine runs that mode as a plain continue anyway.
+		setting.description = t('nodeSettings.onError.tool.description');
+		setting.options = [
+			{
+				name: t('nodeSettings.onError.tool.options.continueRegularOutput.displayName'),
+				value: 'continueRegularOutput',
+				description: t('nodeSettings.onError.tool.options.continueRegularOutput.description'),
+			},
+			{
+				name: t('nodeSettings.onError.tool.options.stopWorkflow.displayName'),
+				value: 'stopWorkflow',
+				description: t('nodeSettings.onError.tool.options.stopWorkflow.description'),
+			},
+		];
+		return setting;
+	}
+
+	setting.options = [
+		{
+			name: t('nodeSettings.onError.options.stopWorkflow.displayName'),
+			value: 'stopWorkflow',
+			description: t('nodeSettings.onError.options.stopWorkflow.description'),
+		},
+		{
+			name: t('nodeSettings.onError.options.continueRegularOutput.displayName'),
+			value: 'continueRegularOutput',
+			description: t('nodeSettings.onError.options.continueRegularOutput.description'),
+		},
+		{
+			name: t('nodeSettings.onError.options.continueErrorOutput.displayName'),
+			value: 'continueErrorOutput',
+			description: t('nodeSettings.onError.options.continueErrorOutput.description'),
+		},
+	];
+	return setting;
+}
+
 export function createCommonNodeSettings(
-	isToolOrModelNode: boolean,
+	kind: CommonNodeSettingsKind,
 	t: (key: BaseTextKey) => string,
 	canUseOtelCustomSpanAttributes = false,
 ) {
 	const ret: INodeProperties[] = [];
 
-	if (!isToolOrModelNode) {
+	if (kind === 'node') {
 		ret.push(
 			{
 				displayName: t('nodeSettings.alwaysOutputData.displayName'),
@@ -481,6 +545,11 @@ export function createCommonNodeSettings(
 				description: t('nodeSettings.executeOnce.description'),
 				isNodeSetting: true,
 			},
+		);
+	}
+
+	if (kind !== 'subNode') {
+		ret.push(
 			{
 				displayName: t('nodeSettings.retryOnFail.displayName'),
 				name: 'retryOnFail',
@@ -526,32 +595,7 @@ export function createCommonNodeSettings(
 				description: t('nodeSettings.waitBetweenTries.description'),
 				isNodeSetting: true,
 			},
-			{
-				displayName: t('nodeSettings.onError.displayName'),
-				name: 'onError',
-				type: 'options',
-				options: [
-					{
-						name: t('nodeSettings.onError.options.stopWorkflow.displayName'),
-						value: 'stopWorkflow',
-						description: t('nodeSettings.onError.options.stopWorkflow.description'),
-					},
-					{
-						name: t('nodeSettings.onError.options.continueRegularOutput.displayName'),
-						value: 'continueRegularOutput',
-						description: t('nodeSettings.onError.options.continueRegularOutput.description'),
-					},
-					{
-						name: t('nodeSettings.onError.options.continueErrorOutput.displayName'),
-						value: 'continueErrorOutput',
-						description: t('nodeSettings.onError.options.continueErrorOutput.description'),
-					},
-				],
-				default: 'stopWorkflow',
-				description: t('nodeSettings.onError.description'),
-				noDataExpression: true,
-				isNodeSetting: true,
-			},
+			createOnErrorSetting(kind, t),
 		);
 	}
 
@@ -720,6 +764,17 @@ export function collectSettings(node: INodeUi, nodeSettings: INodeProperties[]):
 				[nodeSetting.name]: nodeSetting.default,
 			};
 		}
+	}
+
+	// An `onError` the settings do not offer (a tool storing the error-output mode, which
+	// the engine runs as a plain continue) shows as the default rather than as a blank choice.
+	const onErrorSetting = nodeSettings.find((setting) => setting.name === 'onError');
+	if (
+		onErrorSetting &&
+		isINodePropertyOptionsList(onErrorSetting.options) &&
+		!onErrorSetting.options.some((option) => option.value === ret.onError)
+	) {
+		ret = { ...ret, onError: onErrorSetting.default };
 	}
 
 	ret = {

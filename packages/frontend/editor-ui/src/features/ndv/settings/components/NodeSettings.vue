@@ -41,6 +41,7 @@ import { importCurlEventBus } from '@/app/event-bus';
 import { ndvEventBus } from '@/features/ndv/shared/ndv.eventBus';
 import NodeStorageLimitCallout from '@/features/core/dataTable/components/NodeStorageLimitCallout.vue';
 import { RenameNodeCommand } from '@/app/models/history';
+import { getDefaultOnError } from '@/app/utils/nodeTypes/nodeTypeTransforms';
 import { useCredentialsStore } from '@/features/credentials/credentials.store';
 import { useHistoryStore } from '@/app/stores/history.store';
 import { injectNDVStore } from '@/features/ndv/shared/ndv.store';
@@ -473,11 +474,19 @@ const valueChanged = (parameterData: IUpdateInformation) => {
 			[parameterData.name]: newValue,
 		};
 
+		// A tool runs with `continue` when it stores no `onError`. Choosing it removes the
+		// stored value instead of writing the implicit default, so a tool that was never
+		// configured and one set back to it are the same node.
+		const isImplicitToolDefault =
+			isToolNode.value &&
+			parameterData.name === 'onError' &&
+			newValue === getDefaultOnError(isToolNode.value);
+
 		// Update data in vuex
 		const updateInformation = {
 			name: _node.name,
 			key: parameterData.name,
-			value: newValue,
+			value: isImplicitToolDefault ? undefined : newValue,
 		};
 
 		workflowDocumentStore?.value?.setNodeValue(updateInformation);
@@ -519,7 +528,7 @@ const populateHiddenIssuesSet = () => {
 
 const nodeSettings = computed(() =>
 	createCommonNodeSettings(
-		isToolNode.value || isModelNode.value,
+		isToolNode.value ? 'tool' : isModelNode.value ? 'subNode' : 'node',
 		i18n.baseText.bind(i18n),
 		settingsStore.isOtelCustomSpanAttributesEnabled,
 	),

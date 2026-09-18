@@ -601,9 +601,11 @@ describe('shouldSkipParamValidation', () => {
 
 describe('createCommonNodeSettings', () => {
 	const mockT = (key: string) => key;
+	const optionValues = (setting: INodeProperties | undefined) =>
+		(setting?.options ?? []).map((option) => (option as INodePropertyOptions).value);
 
-	it('should include retry, executeOnce, and alwaysOutputData settings when isToolOrModelNode is false', () => {
-		const settings = createCommonNodeSettings(false, mockT);
+	it('should include retry, executeOnce, and alwaysOutputData settings for a regular node', () => {
+		const settings = createCommonNodeSettings('node', mockT);
 		const names = settings.map((s) => s.name);
 
 		expect(names).toContain('retryOnFail');
@@ -614,8 +616,57 @@ describe('createCommonNodeSettings', () => {
 		expect(names).toContain('onError');
 	});
 
-	it('should exclude retry, executeOnce, and alwaysOutputData settings when isToolOrModelNode is true', () => {
-		const settings = createCommonNodeSettings(true, mockT);
+	it('should offer every onError behaviour to a regular node, stopping by default', () => {
+		const onError = createCommonNodeSettings('node', mockT).find((s) => s.name === 'onError');
+
+		expect(optionValues(onError)).toEqual([
+			'stopWorkflow',
+			'continueRegularOutput',
+			'continueErrorOutput',
+		]);
+		expect(onError?.default).toBe('stopWorkflow');
+	});
+
+	it('should include retry and onError but no output settings for a tool node', () => {
+		const settings = createCommonNodeSettings('tool', mockT);
+		const names = settings.map((s) => s.name);
+
+		expect(names).toContain('retryOnFail');
+		expect(names).toContain('maxTries');
+		expect(names).toContain('waitBetweenTries');
+		expect(names).toContain('onError');
+		expect(names).not.toContain('executeOnce');
+		expect(names).not.toContain('alwaysOutputData');
+	});
+
+	it('should offer a tool only continue and stop, continuing by default', () => {
+		const onError = createCommonNodeSettings('tool', mockT).find((s) => s.name === 'onError');
+
+		// No error output: a tool has one output, the agent. Continue comes first as the default.
+		expect(optionValues(onError)).toEqual(['continueRegularOutput', 'stopWorkflow']);
+		expect(onError?.default).toBe('continueRegularOutput');
+		expect(onError?.description).toBe('nodeSettings.onError.tool.description');
+		expect((onError?.options as INodePropertyOptions[]).map((option) => option.name)).toEqual([
+			'nodeSettings.onError.tool.options.continueRegularOutput.displayName',
+			'nodeSettings.onError.tool.options.stopWorkflow.displayName',
+		]);
+	});
+
+	it('should keep the same retry settings for a tool as for a regular node', () => {
+		const byName = (settings: INodeProperties[]) =>
+			Object.fromEntries(
+				settings
+					.filter((s) => ['retryOnFail', 'maxTries', 'waitBetweenTries'].includes(s.name))
+					.map((s) => [s.name, s]),
+			);
+
+		expect(byName(createCommonNodeSettings('tool', mockT))).toEqual(
+			byName(createCommonNodeSettings('node', mockT)),
+		);
+	});
+
+	it('should exclude retry, onError, executeOnce, and alwaysOutputData settings for a sub-node', () => {
+		const settings = createCommonNodeSettings('subNode', mockT);
 		const names = settings.map((s) => s.name);
 
 		expect(names).not.toContain('retryOnFail');
@@ -627,40 +678,34 @@ describe('createCommonNodeSettings', () => {
 	});
 
 	it('should always include notes and notesInFlow settings', () => {
-		const regularSettings = createCommonNodeSettings(false, mockT);
-		const toolSettings = createCommonNodeSettings(true, mockT);
-
-		for (const settings of [regularSettings, toolSettings]) {
-			const names = settings.map((s) => s.name);
+		for (const kind of ['node', 'tool', 'subNode'] as const) {
+			const names = createCommonNodeSettings(kind, mockT).map((s) => s.name);
 			expect(names).toContain('notes');
 			expect(names).toContain('notesInFlow');
 		}
 	});
 
 	it('should not include customTelemetryTags when canUseOtelCustomSpanAttributes is false', () => {
-		const regularSettings = createCommonNodeSettings(false, mockT, false);
-		const toolSettings = createCommonNodeSettings(true, mockT, false);
-
-		expect(regularSettings.map((s) => s.name)).not.toContain('customTelemetryTags');
-		expect(toolSettings.map((s) => s.name)).not.toContain('customTelemetryTags');
+		for (const kind of ['node', 'tool', 'subNode'] as const) {
+			const settings = createCommonNodeSettings(kind, mockT, false);
+			expect(settings.map((s) => s.name)).not.toContain('customTelemetryTags');
+		}
 	});
 
 	it('should not include customTelemetryTags when canUseOtelCustomSpanAttributes is omitted', () => {
-		const settings = createCommonNodeSettings(false, mockT);
+		const settings = createCommonNodeSettings('node', mockT);
 		expect(settings.map((s) => s.name)).not.toContain('customTelemetryTags');
 	});
 
 	it('should include customTelemetryTags as the last setting when canUseOtelCustomSpanAttributes is true', () => {
-		const regularSettings = createCommonNodeSettings(false, mockT, true);
-		const toolSettings = createCommonNodeSettings(true, mockT, true);
-
-		for (const settings of [regularSettings, toolSettings]) {
+		for (const kind of ['node', 'tool', 'subNode'] as const) {
+			const settings = createCommonNodeSettings(kind, mockT, true);
 			expect(settings[settings.length - 1].name).toBe('customTelemetryTags');
 		}
 	});
 
 	it('should configure customTelemetryTags with non-expression key and expression-capable value', () => {
-		const settings = createCommonNodeSettings(false, mockT, true);
+		const settings = createCommonNodeSettings('node', mockT, true);
 		const tagsSetting = settings.find((s) => s.name === 'customTelemetryTags');
 
 		expect(tagsSetting).toBeDefined();
@@ -707,6 +752,51 @@ describe('collectSettings', () => {
 		const result = collectSettings(node, []);
 
 		expect(result.customTelemetryTags).toEqual({});
+	});
+
+	describe('for a tool node', () => {
+		const toolSettings = createCommonNodeSettings('tool', (key) => key);
+		const toolNode = (overrides: Partial<INodeUi> = {}): INodeUi =>
+			({ name: 'Tool', parameters: {}, ...overrides }) as INodeUi;
+
+		it('shows continue for a tool with no stored onError, which is what it runs with', () => {
+			expect(collectSettings(toolNode(), toolSettings).onError).toBe('continueRegularOutput');
+		});
+
+		it('restores a stored stop and error', () => {
+			expect(collectSettings(toolNode({ onError: 'stopWorkflow' }), toolSettings).onError).toBe(
+				'stopWorkflow',
+			);
+		});
+
+		it('shows the legacy continueOnFail flag as continue', () => {
+			expect(collectSettings(toolNode({ continueOnFail: true }), toolSettings).onError).toBe(
+				'continueRegularOutput',
+			);
+		});
+
+		it('shows a stored error-output mode, which the engine runs as continue, as continue', () => {
+			expect(
+				collectSettings(toolNode({ onError: 'continueErrorOutput' }), toolSettings).onError,
+			).toBe('continueRegularOutput');
+		});
+
+		it('restores the retry settings', () => {
+			const result = collectSettings(
+				toolNode({ retryOnFail: true, maxTries: 4, waitBetweenTries: 250 }),
+				toolSettings,
+			);
+
+			expect(result).toMatchObject({ retryOnFail: true, maxTries: 4, waitBetweenTries: 250 });
+		});
+
+		it('keeps the error-output mode for a regular node, which offers it', () => {
+			const nodeSettings = createCommonNodeSettings('node', (key) => key);
+
+			expect(
+				collectSettings(toolNode({ onError: 'continueErrorOutput' }), nodeSettings).onError,
+			).toBe('continueErrorOutput');
+		});
 	});
 });
 

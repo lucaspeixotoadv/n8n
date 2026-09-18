@@ -105,6 +105,57 @@ const agentNodeType = {
 	],
 } as unknown as INodeTypeDescription;
 
+const toolNode = createTestNode({
+	name: 'Calculator',
+	type: '@n8n/n8n-nodes-langchain.toolCalculator',
+	typeVersion: 1,
+});
+
+const toolNodeType = {
+	displayName: 'Calculator',
+	name: '@n8n/n8n-nodes-langchain.toolCalculator',
+	group: ['transform'],
+	description: 'A calculator tool',
+	version: 1,
+	defaults: { name: 'Calculator' },
+	inputs: [],
+	outputs: ['ai_tool'],
+	properties: [],
+} as unknown as INodeTypeDescription;
+
+/**
+ * Stands in for the settings list: lists the settings it was given (with the values each
+ * offers) and lets a test pick a value the way the real list would, through `valueChanged`.
+ */
+const NodeSettingsListStub = {
+	props: {
+		parameters: { type: Array, default: () => [] },
+		path: { type: String, default: '' },
+	},
+	emits: ['valueChanged'],
+	template: `
+		<div v-if="path === ''" data-test-id="node-settings-list">
+			<span
+				v-for="parameter in parameters"
+				:key="parameter.name"
+				:data-test-id="'node-setting-' + parameter.name"
+			>{{ (parameter.options || []).map((option) => option.value).join(',') }}</span>
+			<button
+				data-test-id="choose-stop-and-error"
+				@click="$emit('valueChanged', { name: 'onError', value: 'stopWorkflow' })"
+			/>
+			<button
+				data-test-id="choose-continue"
+				@click="$emit('valueChanged', { name: 'onError', value: 'continueRegularOutput' })"
+			/>
+			<button
+				data-test-id="enable-retry"
+				@click="$emit('valueChanged', { name: 'retryOnFail', value: true })"
+			/>
+		</div>
+	`,
+};
+
 interface RenderOptions {
 	runData?: IRunData;
 	node?: typeof httpNode;
@@ -239,6 +290,77 @@ describe('NodeSettings', () => {
 		await waitFor(() => {
 			expect(settingsTab.querySelector('.tab')?.className).toContain('activeTab');
 			expect(paramsTab.querySelector('.tab')?.className).not.toContain('activeTab');
+		});
+	});
+
+	describe('tool node settings', () => {
+		const renderToolSettings = () =>
+			renderNodeSettings({
+				node: toolNode,
+				nodeType: toolNodeType,
+				stubs: { ParameterInputList: NodeSettingsListStub },
+			});
+
+		it('offers retry and the two error behaviours a tool runs with, and nothing else', async () => {
+			const { findByTestId, queryByTestId } = renderToolSettings();
+
+			expect(await findByTestId('node-setting-retryOnFail')).toBeInTheDocument();
+			expect(queryByTestId('node-setting-maxTries')).toBeInTheDocument();
+			expect(queryByTestId('node-setting-waitBetweenTries')).toBeInTheDocument();
+			expect(queryByTestId('node-setting-onError')).toHaveTextContent(
+				'continueRegularOutput,stopWorkflow',
+			);
+			expect(queryByTestId('node-setting-executeOnce')).not.toBeInTheDocument();
+			expect(queryByTestId('node-setting-alwaysOutputData')).not.toBeInTheDocument();
+		});
+
+		it('keeps every setting for a regular node', async () => {
+			const { findByTestId, queryByTestId } = renderNodeSettings({
+				stubs: { ParameterInputList: NodeSettingsListStub },
+			});
+
+			expect(await findByTestId('node-setting-executeOnce')).toBeInTheDocument();
+			expect(queryByTestId('node-setting-alwaysOutputData')).toBeInTheDocument();
+			expect(queryByTestId('node-setting-onError')).toHaveTextContent(
+				'stopWorkflow,continueRegularOutput,continueErrorOutput',
+			);
+		});
+
+		it('stores stop and error on the tool', async () => {
+			const { findByTestId, workflowDocumentStore } = renderToolSettings();
+
+			await fireEvent.click(await findByTestId('choose-stop-and-error'));
+
+			expect(workflowDocumentStore.getNodeByName(toolNode.name)?.onError).toBe('stopWorkflow');
+		});
+
+		it('removes the stored value when the tool is set back to continue, its default', async () => {
+			const { findByTestId, workflowDocumentStore } = renderToolSettings();
+			await fireEvent.click(await findByTestId('choose-stop-and-error'));
+
+			await fireEvent.click(await findByTestId('choose-continue'));
+
+			expect(workflowDocumentStore.getNodeByName(toolNode.name)?.onError).toBeUndefined();
+		});
+
+		it('stores the retry setting on the tool', async () => {
+			const { findByTestId, workflowDocumentStore } = renderToolSettings();
+
+			await fireEvent.click(await findByTestId('enable-retry'));
+
+			expect(workflowDocumentStore.getNodeByName(toolNode.name)?.retryOnFail).toBe(true);
+		});
+
+		it('stores continue on a regular node, whose default is to stop', async () => {
+			const { findByTestId, workflowDocumentStore } = renderNodeSettings({
+				stubs: { ParameterInputList: NodeSettingsListStub },
+			});
+
+			await fireEvent.click(await findByTestId('choose-continue'));
+
+			expect(workflowDocumentStore.getNodeByName(httpNode.name)?.onError).toBe(
+				'continueRegularOutput',
+			);
 		});
 	});
 

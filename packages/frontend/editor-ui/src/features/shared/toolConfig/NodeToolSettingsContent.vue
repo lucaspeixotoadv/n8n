@@ -118,9 +118,11 @@ const tabOptions = computed<Array<ITab<ToolSettingsTab>>>(() => {
 	return tabs;
 });
 
+// The retry and error settings stay out of this form: the workflow engine's tool
+// execution is what reads them, and that is configured from the canvas NDV.
 const nodeSettings = computed(() =>
 	createCommonNodeSettings(
-		true,
+		'subNode',
 		i18n.baseText.bind(i18n),
 		settingsStore.isOtelCustomSpanAttributesEnabled,
 	).filter((s) => s.name !== 'notes' && s.name !== 'notesInFlow'),

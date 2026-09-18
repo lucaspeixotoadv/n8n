@@ -369,6 +369,77 @@ describe('serializeNode', () => {
 		expect(resultWithout.notes).toBeUndefined();
 	});
 
+	describe('onError', () => {
+		const toolNodeType = {
+			name: 'test.tool',
+			displayName: 'Tool',
+			outputs: ['ai_tool'],
+			properties: [],
+		} as unknown as INodeTypeDescription;
+		const regularNodeType = {
+			name: 'test.regular',
+			displayName: 'Regular',
+			outputs: ['main'],
+			properties: [],
+		} as unknown as INodeTypeDescription;
+
+		it('keeps stop and error on a tool, whose default is to continue', () => {
+			nodeTypeProvider.getNodeType.mockReturnValue(toolNodeType);
+
+			const result = serializeNode(nodeTypeProvider, createNode({ onError: 'stopWorkflow' }));
+
+			expect(result.onError).toBe('stopWorkflow');
+		});
+
+		it('drops continue on a tool, so a tool set back to it stores nothing', () => {
+			nodeTypeProvider.getNodeType.mockReturnValue(toolNodeType);
+
+			const result = serializeNode(
+				nodeTypeProvider,
+				createNode({ onError: 'continueRegularOutput' }),
+			);
+
+			expect(result.onError).toBeUndefined();
+			expect(result).not.toHaveProperty('onError');
+		});
+
+		it('stores nothing for a tool that was never configured', () => {
+			nodeTypeProvider.getNodeType.mockReturnValue(toolNodeType);
+
+			expect(serializeNode(nodeTypeProvider, createNode())).not.toHaveProperty('onError');
+		});
+
+		it('keeps the retry settings of a tool as they are', () => {
+			nodeTypeProvider.getNodeType.mockReturnValue(toolNodeType);
+
+			const result = serializeNode(
+				nodeTypeProvider,
+				createNode({ retryOnFail: true, maxTries: 4, waitBetweenTries: 250 }),
+			);
+
+			expect(result).toMatchObject({ retryOnFail: true, maxTries: 4, waitBetweenTries: 250 });
+		});
+
+		it('drops stop and error on a regular node, whose default it is', () => {
+			nodeTypeProvider.getNodeType.mockReturnValue(regularNodeType);
+
+			const result = serializeNode(nodeTypeProvider, createNode({ onError: 'stopWorkflow' }));
+
+			expect(result).not.toHaveProperty('onError');
+		});
+
+		it('keeps continue on a regular node', () => {
+			nodeTypeProvider.getNodeType.mockReturnValue(regularNodeType);
+
+			const result = serializeNode(
+				nodeTypeProvider,
+				createNode({ onError: 'continueRegularOutput' }),
+			);
+
+			expect(result.onError).toBe('continueRegularOutput');
+		});
+	});
+
 	it('does not throw and omits null optional fields when node type is unknown', () => {
 		const node = createNode({
 			credentials: null as unknown as INodeUi['credentials'],
