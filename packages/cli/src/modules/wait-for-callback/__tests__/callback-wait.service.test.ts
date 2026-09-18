@@ -4,11 +4,11 @@ import type { OperationContext } from '@n8n/db';
 import type { CallbackWait } from '../callback-wait.entity';
 import type { CallbackWaitRepository } from '../callback-wait.repository';
 import type { IDataObject } from 'n8n-workflow';
-import { UserError } from 'n8n-workflow';
 import { mock } from 'vitest-mock-extended';
 
 import type { CallbackWaitConfig } from '../callback-wait.config';
 import { CallbackWaitService } from '../callback-wait.service';
+import { CallbackWaitCollisionError } from '../errors/callback-wait-collision.error';
 
 const NAMESPACE = 'endpoint-a';
 const OTHER_NAMESPACE = 'endpoint-b';
@@ -116,31 +116,89 @@ describe('CallbackWaitService', () => {
 			expect(repository.insertWait).not.toHaveBeenCalled();
 		});
 
-		it('refuses a second wait on a key that is already active', async () => {
-			repository.findLive.mockResolvedValue(makeRow({ status: 'waiting' }));
+		it('refuses a second wait on a key that is already active, naming the execution holding it', async () => {
+			const since = new Date('2026-09-18T10:00:00.000Z');
+			repository.findLive.mockResolvedValue(
+				makeRow({ status: 'waiting', executionId: 'exec-1', createdAt: since }),
+			);
 
-			await expect(
-				service.registerWait({ namespace: NAMESPACE, correlationValue: '125', ...claim }),
-			).rejects.toThrow(UserError);
+			const refusal = service.registerWait({
+				namespace: NAMESPACE,
+				correlationValue: '125',
+				...claim,
+				executionId: 'exec-2',
+			});
+
+			await expect(refusal).rejects.toThrow(CallbackWaitCollisionError);
+			await expect(refusal).rejects.toMatchObject({
+				correlationValue: '125',
+				holder: { executionId: 'exec-1', since },
+			});
+			await expect(refusal).rejects.toThrow(
+				'execution exec-1 has held this identifier since 2026-09-18T10:00:00.000Z',
+			);
 			expect(repository.insertWait).not.toHaveBeenCalled();
 		});
 
-		it('turns a unique-constraint failure into the same refusal', async () => {
+		it('refuses a wait whose key a resume already claimed, the same way', async () => {
+			repository.findLive.mockResolvedValue(makeRow({ status: 'resuming', executionId: 'exec-1' }));
+
+			await expect(
+				service.registerWait({ namespace: NAMESPACE, correlationValue: '125', ...claim }),
+			).rejects.toMatchObject({ holder: { executionId: 'exec-1' } });
+		});
+
+		it('turns a unique-constraint failure into the same refusal, naming the winner', async () => {
+			// The key was free when checked; another registration committed in between.
+			const winner = makeRow({ status: 'waiting', executionId: 'exec-1' });
+			repository.findLive.mockResolvedValueOnce(null).mockResolvedValueOnce(winner);
+			repository.insertWait.mockRejectedValue(new Error('UNIQUE constraint failed'));
+
+			const refusal = service.registerWait({
+				namespace: NAMESPACE,
+				correlationValue: '125',
+				...claim,
+				executionId: 'exec-2',
+			});
+
+			await expect(refusal).rejects.toThrow(CallbackWaitCollisionError);
+			await expect(refusal).rejects.toMatchObject({
+				holder: { executionId: 'exec-1', since: winner.createdAt },
+			});
+		});
+
+		it('names the winner even when its wait resolved before the loser looked', async () => {
+			const resolved = makeRow({ status: 'completed', activeKey: null, executionId: 'exec-1' });
 			repository.findLive.mockResolvedValue(null);
+			repository.findLatest.mockResolvedValue(resolved);
 			repository.insertWait.mockRejectedValue(new Error('UNIQUE constraint failed'));
 
 			await expect(
 				service.registerWait({ namespace: NAMESPACE, correlationValue: '125', ...claim }),
-			).rejects.toThrow(UserError);
+			).rejects.toMatchObject({ holder: { executionId: 'exec-1' } });
 		});
 
-		it('refuses when another registration claimed the parked callback first', async () => {
-			repository.findLive.mockResolvedValue(makeRow({ status: 'pendingCallback', payload: {} }));
-			repository.claimEarlyCallback.mockResolvedValue(false);
+		it('surfaces an insert failure that left no row behind, which is not a collision', async () => {
+			repository.findLive.mockResolvedValue(null);
+			repository.findLatest.mockResolvedValue(null);
+			repository.insertWait.mockRejectedValue(new Error('disk full'));
 
 			await expect(
 				service.registerWait({ namespace: NAMESPACE, correlationValue: '125', ...claim }),
-			).rejects.toThrow(UserError);
+			).rejects.toThrow('disk full');
+		});
+
+		it('refuses when another registration claimed the parked callback first, naming it', async () => {
+			repository.findLive.mockResolvedValue(makeRow({ status: 'pendingCallback', payload: {} }));
+			repository.claimEarlyCallback.mockResolvedValue(false);
+			repository.findLatest.mockResolvedValue(
+				makeRow({ status: 'completed', activeKey: null, executionId: 'exec-2' }),
+			);
+
+			await expect(
+				service.registerWait({ namespace: NAMESPACE, correlationValue: '125', ...claim }),
+			).rejects.toMatchObject({ holder: { executionId: 'exec-2' } });
+			expect(repository.insertWait).not.toHaveBeenCalled();
 		});
 	});
 
