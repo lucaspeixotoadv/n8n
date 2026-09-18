@@ -8,11 +8,11 @@ import type {
 	CallbackWaitRegistrationResult,
 	IDataObject,
 } from 'n8n-workflow';
-import { UserError } from 'n8n-workflow';
 
 import { CallbackWaitConfig } from './callback-wait.config';
 import type { CallbackWait } from './callback-wait.entity';
 import { CallbackWaitRepository } from './callback-wait.repository';
+import { CallbackWaitCollisionError } from './errors/callback-wait-collision.error';
 
 /** Why an early callback was not parked. */
 export type CallbackDropReason = 'tooManyParked' | 'bodyTooLarge';
@@ -57,6 +57,12 @@ export class CallbackWaitService implements CallbackWaitProvider {
 	 * Check and insert share one transaction so the tool call and a concurrent delivery
 	 * cannot both conclude they got there first. The database keeps the invariant even if
 	 * this code is wrong: the partial unique index rejects a second live row for a key.
+	 *
+	 * That index is also what elects the execution a callback belongs to when several ask
+	 * for the same key: the registration the database commits first holds it, and every
+	 * later one fails here with {@link CallbackWaitCollisionError}, before it parks. The
+	 * order is the commit order the database serialised, not a timestamp comparison, so
+	 * there is no tie to break and nothing depends on the order rows come back in.
 	 */
 	async registerWait(
 		registration: CallbackWaitRegistration,
@@ -70,29 +76,42 @@ export class CallbackWaitService implements CallbackWaitProvider {
 			userId: registration.userId ?? null,
 		};
 
-		return await this.transactionRunner.run({}, async (ctx) => {
-			const live = await this.repository.findLive(ctx, namespace, correlationValue);
+		try {
+			return await this.transactionRunner.run({}, async (ctx) => {
+				const live = await this.repository.findLive(ctx, namespace, correlationValue);
 
-			if (live?.status === 'pendingCallback') {
-				const claimed = await this.repository.claimEarlyCallback(ctx, live.id, claim);
-				if (!claimed) throw this.duplicateWaitError(correlationValue);
+				if (live?.status === 'pendingCallback') {
+					const claimed = await this.repository.claimEarlyCallback(ctx, live.id, claim);
+					if (claimed) return { status: 'resolved', payload: live.payload ?? {} };
 
-				return { status: 'resolved', payload: live.payload ?? {} };
-			}
+					// Another registration consumed the parked body first. Its claim is committed,
+					// or the conditional update would have matched, so the row now names it.
+					const consumer = await this.repository.findLatest(ctx, namespace, correlationValue);
+					throw this.collisionError(correlationValue, consumer);
+				}
 
-			// A live row that is not a parked callback is another tool call already waiting on
-			// this key. Refusing loudly is the only safe answer: the callback resolves at most
-			// one wait, so a second one would park forever with no way to be woken.
-			if (live) throw this.duplicateWaitError(correlationValue);
+				// A live row that is not a parked callback is another tool call already waiting on
+				// this key. Refusing loudly is the only safe answer: the callback resolves at most
+				// one wait, so a second one would park forever with no way to be woken.
+				if (live) throw this.collisionError(correlationValue, live);
 
-			try {
 				await this.repository.insertWait(ctx, namespace, correlationValue, claim);
-			} catch (error) {
-				throw this.duplicateWaitError(correlationValue, ensureError(error));
-			}
 
-			return { status: 'registered' };
-		});
+				return { status: 'registered' };
+			});
+		} catch (error) {
+			if (error instanceof CallbackWaitCollisionError) throw error;
+
+			// Two registrations can both find the key free and both insert. The unique index
+			// lets only one row in; the other insert fails, and by then the winner's row is
+			// there to be named. A failure that left no row behind is not a collision.
+			const holder =
+				(await this.repository.findLive({}, namespace, correlationValue)) ??
+				(await this.repository.findLatest({}, namespace, correlationValue));
+			if (holder) throw this.collisionError(correlationValue, holder, ensureError(error));
+
+			throw error;
+		}
 	}
 
 	/**
@@ -216,14 +235,16 @@ export class CallbackWaitService implements CallbackWaitProvider {
 		return Buffer.byteLength(JSON.stringify(payload)) <= this.config.maxCallbackBodyBytes;
 	}
 
-	private duplicateWaitError(correlationValue: string, cause?: Error) {
-		return new UserError(
-			`A callback wait is already active for the identifier "${correlationValue}" on this tool`,
-			{
-				cause,
-				description:
-					'A callback resolves at most one wait, so two waits sharing an identifier would leave one of them suspended forever. Use an identifier that is unique among the tool calls currently in flight.',
-			},
+	/**
+	 * The refusal a registration gets for a key another execution holds. The holder is the
+	 * row that owns the key; a row with no execution is a parked callback nobody has
+	 * consumed yet, which cannot collide, so the error then names no holder.
+	 */
+	private collisionError(correlationValue: string, holder: CallbackWait | null, cause?: Error) {
+		return new CallbackWaitCollisionError(
+			correlationValue,
+			holder?.executionId ? { executionId: holder.executionId, since: holder.createdAt } : null,
+			cause,
 		);
 	}
 }
