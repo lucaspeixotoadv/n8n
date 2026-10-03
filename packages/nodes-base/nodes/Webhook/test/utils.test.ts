@@ -682,6 +682,93 @@ describe('Webhook Utils', () => {
 			).rejects.toThrowError('Authorization data is wrong!');
 		});
 
+		describe('customAuth', () => {
+			const setup = (
+				json: string | undefined,
+				request: { headers?: Record<string, string>; query?: IDataObject; body?: IDataObject } = {},
+			) => {
+				const req = { headers: request.headers ?? {} };
+				const ctx: Partial<IWebhookFunctions> = {
+					getNodeParameter: vi.fn().mockReturnValue('customAuth'),
+					getCredentials:
+						json === undefined
+							? vi.fn().mockRejectedValue(new Error('No credentials'))
+							: vi.fn().mockResolvedValue({ json }),
+					getRequestObject: vi.fn().mockReturnValue(req),
+					getHeaderData: vi.fn().mockReturnValue(req.headers),
+					getQueryData: vi.fn().mockReturnValue(request.query ?? {}),
+					getBodyData: vi.fn().mockReturnValue(request.body ?? {}),
+				};
+				return { ctx: ctx as IWebhookFunctions, req };
+			};
+
+			it('should throw an error if no credential is defined on the node', async () => {
+				const { ctx } = setup(undefined);
+				await expect(validateWebhookAuthentication(ctx, 'authentication')).rejects.toThrowError(
+					'No authentication data defined on node!',
+				);
+			});
+
+			it('should throw an error if the credential JSON has no values', async () => {
+				const { ctx } = setup('{}');
+				await expect(validateWebhookAuthentication(ctx, 'authentication')).rejects.toThrowError(
+					'No authentication data defined on node!',
+				);
+			});
+
+			it('should throw an error if the credential JSON is invalid', async () => {
+				const { ctx } = setup('{ invalid');
+				await expect(validateWebhookAuthentication(ctx, 'authentication')).rejects.toThrowError(
+					'No authentication data defined on node!',
+				);
+			});
+
+			it('should accept a request that has all the expected values', async () => {
+				const { ctx, req } = setup(
+					JSON.stringify({
+						headers: { 'X-Api-Key': 'secret' },
+						qs: { tenant: 'acme' },
+						body: { token: 123 },
+					}),
+					{
+						headers: { 'x-api-key': 'secret', 'x-other': 'value' },
+						query: { tenant: 'acme' },
+						body: { token: 123, other: true },
+					},
+				);
+
+				await expect(validateWebhookAuthentication(ctx, 'authentication')).resolves.toBeUndefined();
+				expect(redactedHeaders(req)).toEqual({ 'x-api-key': REDACTED, 'x-other': 'value' });
+			});
+
+			it.each([
+				['a header is missing', { query: { tenant: 'acme' } }],
+				['a header is wrong', { headers: { 'x-api-key': 'wrong' }, query: { tenant: 'acme' } }],
+				['a query parameter is missing', { headers: { 'x-api-key': 'secret' } }],
+				[
+					'a query parameter is wrong',
+					{ headers: { 'x-api-key': 'secret' }, query: { tenant: 'other' } },
+				],
+			])('should reject the request if %s', async (_, request) => {
+				const { ctx } = setup(
+					JSON.stringify({ headers: { 'X-Api-Key': 'secret' }, qs: { tenant: 'acme' } }),
+					request,
+				);
+				await expect(validateWebhookAuthentication(ctx, 'authentication')).rejects.toThrowError(
+					'Authorization data is wrong!',
+				);
+			});
+
+			it('should reject the request if a body field is wrong', async () => {
+				const { ctx } = setup(JSON.stringify({ body: { token: 'secret' } }), {
+					body: { token: 'wrong' },
+				});
+				await expect(validateWebhookAuthentication(ctx, 'authentication')).rejects.toThrowError(
+					'Authorization data is wrong!',
+				);
+			});
+		});
+
 		it('should throw an error if jwtAuth is enabled but no authentication data is defined on the node', async () => {
 			const ctx: Partial<IWebhookFunctions> = {
 				getNodeParameter: vi.fn().mockReturnValue('jwtAuth'),

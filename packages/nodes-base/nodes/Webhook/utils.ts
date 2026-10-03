@@ -3,7 +3,7 @@ import basicAuth from 'basic-auth';
 import { rm } from 'fs/promises';
 import isbot from 'isbot';
 import jwt from 'jsonwebtoken';
-import { recordConsumedAuth, WorkflowConfigurationError } from 'n8n-workflow';
+import { jsonParse, recordConsumedAuth, WorkflowConfigurationError } from 'n8n-workflow';
 import type {
 	IWebhookFunctions,
 	INodeExecutionData,
@@ -316,6 +316,43 @@ export const checkResponseModeConfiguration = (context: IWebhookFunctions) => {
 	}
 };
 
+type CustomAuthValues = {
+	headers?: IDataObject;
+	qs?: IDataObject;
+	body?: IDataObject;
+};
+
+const isPlainObject = (value: unknown): value is IDataObject =>
+	typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const hasCustomAuthValues = (values: CustomAuthValues) =>
+	[values.headers, values.qs, values.body].some(
+		(group) => isPlainObject(group) && Object.keys(group).length > 0,
+	);
+
+const toComparable = (value: unknown) =>
+	typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value);
+
+/** Compares in constant time to not leak how much of a secret matched. */
+const safeEqual = (provided: unknown, expected: unknown) => {
+	const providedBuffer = Buffer.from(toComparable(provided));
+	const expectedBuffer = Buffer.from(toComparable(expected));
+	return (
+		providedBuffer.length === expectedBuffer.length &&
+		timingSafeEqual(providedBuffer, expectedBuffer)
+	);
+};
+
+/** Returns true when every expected key exists in `provided` with the same value. */
+const matchesCustomAuthValues = (provided: unknown, expected: IDataObject | undefined) => {
+	if (expected === undefined) return true;
+	if (!isPlainObject(expected) || !isPlainObject(provided)) return false;
+
+	return Object.entries(expected).every(
+		([key, value]) => Object.hasOwn(provided, key) && safeEqual(provided[key], value),
+	);
+};
+
 export async function validateWebhookAuthentication(
 	ctx: IWebhookFunctions,
 	authPropertyName: string,
@@ -405,6 +442,37 @@ export async function validateWebhookAuthentication(
 		}
 
 		recordConsumedAuth(req, [headerName]);
+	} else if (authentication === 'customAuth') {
+		// Every header, query parameter and body field in the credential JSON must match
+		let expectedAuth: ICredentialDataDecryptedObject | undefined;
+		try {
+			expectedAuth = await ctx.getCredentials<ICredentialDataDecryptedObject>('httpCustomAuth');
+		} catch {}
+
+		let customAuth: CustomAuthValues | undefined;
+		try {
+			customAuth = jsonParse<CustomAuthValues>((expectedAuth?.json as string) || '{}');
+		} catch {}
+
+		if (!customAuth || !hasCustomAuthValues(customAuth)) {
+			// Data is not defined on node so can not authenticate
+			throw new WebhookAuthorizationError(500, 'No authentication data defined on node!');
+		}
+
+		const expectedHeaders = Object.fromEntries(
+			Object.entries(customAuth.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]),
+		);
+
+		if (
+			!matchesCustomAuthValues(headers as IDataObject, expectedHeaders) ||
+			!matchesCustomAuthValues(ctx.getQueryData() as IDataObject, customAuth.qs) ||
+			!matchesCustomAuthValues(ctx.getBodyData(), customAuth.body)
+		) {
+			// Provided authentication data is wrong
+			throw new WebhookAuthorizationError(403);
+		}
+
+		recordConsumedAuth(req, Object.keys(expectedHeaders));
 	} else if (authentication === 'jwtAuth') {
 		let expectedAuth;
 

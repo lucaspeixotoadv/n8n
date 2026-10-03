@@ -85,6 +85,15 @@ export const credentialsProperty = (
 			},
 		},
 	},
+	{
+		name: 'httpCustomAuth',
+		required: true,
+		displayOptions: {
+			show: {
+				[propertyName]: ['customAuth'],
+			},
+		},
+	},
 ];
 
 export const inboundTriggerAuthenticationBuilderHint = {
@@ -106,6 +115,10 @@ export const authenticationProperty = (
 		{
 			name: 'Basic Auth',
 			value: 'basicAuth',
+		},
+		{
+			name: 'Custom Auth',
+			value: 'customAuth',
 		},
 		{
 			name: 'Header Auth',
