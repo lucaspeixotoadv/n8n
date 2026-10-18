@@ -104,6 +104,8 @@ export const allowedExecutionsQueryFilterFields = Object.keys(
 	schemaGetExecutionsQueryFilter.properties,
 );
 
+const STOPPABLE_STATUSES: ExecutionStatus[] = ['new', 'unknown', 'waiting', 'running'];
+
 @Service()
 export class ExecutionService {
 	constructor(
@@ -538,11 +540,25 @@ export class ExecutionService {
 
 		this.assertStoppable(execution);
 
+		return await this.stopWithWaitingSubExecutions(execution);
+	}
+
+	private async stopWithWaitingSubExecutions(execution: IExecutionResponse): Promise<StopResult> {
+		const waitingChildIds =
+			execution.status === 'waiting'
+				? (execution.data?.executionData?.nodeExecutionStack?.[0]?.metadata
+						?.waitingChildExecutionIds ?? [])
+				: [];
+
 		// oxlint-disable-next-line typescript/no-deprecated
 		const { mode, startedAt, stoppedAt, finished, status } =
 			this.globalConfig.executions.mode === 'regular'
 				? await this.stopInRegularMode(execution)
 				: await this.stopInScalingMode(execution);
+
+		if (status === 'canceled') {
+			await this.stopWaitingSubExecutions(execution.id, waitingChildIds);
+		}
 
 		return {
 			mode,
@@ -551,6 +567,32 @@ export class ExecutionService {
 			finished,
 			status,
 		};
+	}
+
+	/**
+	 * Stops the sub-executions a cancelled parent was waiting on. They run only to return
+	 * their result to the parent, so a later resume would run them with no parent to receive it.
+	 * The parent's stop already passed the access check, so the children are read without one.
+	 */
+	private async stopWaitingSubExecutions(parentId: string, childIds: string[]) {
+		for (const childId of childIds) {
+			try {
+				const child = await this.executionPersistence.findSingleExecution(childId, {
+					includeData: true,
+					unflattenData: true,
+				});
+				if (child?.data?.parentExecution?.executionId !== parentId) continue;
+				if (!STOPPABLE_STATUSES.includes(child.status)) continue;
+
+				await this.stopWithWaitingSubExecutions(child);
+			} catch (error) {
+				this.logger.warn('Failed to stop a sub-execution of a cancelled execution', {
+					parentExecutionId: parentId,
+					childExecutionId: childId,
+					error: ensureError(error).message,
+				});
+			}
+		}
 	}
 
 	async stopMany(query: ExecutionSummaries.StopExecutionFilterQuery, sharedWorkflowIds: string[]) {
@@ -575,8 +617,6 @@ export class ExecutionService {
 	}
 
 	private assertStoppable(execution: IExecutionResponse) {
-		const STOPPABLE_STATUSES: ExecutionStatus[] = ['new', 'unknown', 'waiting', 'running'];
-
 		if (!STOPPABLE_STATUSES.includes(execution.status)) {
 			throw this.notStoppableError(execution.id, execution.status);
 		}
