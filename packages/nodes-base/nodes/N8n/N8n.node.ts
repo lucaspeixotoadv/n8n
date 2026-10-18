@@ -2,6 +2,8 @@ import { NodeConnectionTypes, type INodeType, type INodeTypeDescription } from '
 
 import { auditFields, auditOperations } from './AuditDescription';
 import { credentialFields, credentialOperations } from './CredentialDescription';
+import { getCredentialFields } from './CredentialFields';
+import { searchCredentials } from './CredentialLocator';
 import { executionFields, executionOperations } from './ExecutionDescription';
 import { projectFields, projectOperations } from './ProjectDescription';
 import { workflowFields, workflowOperations } from './WorkflowDescription';
@@ -92,6 +94,12 @@ export class N8n implements INodeType {
 		listSearch: {
 			// Provide workflows search capability for the workflow resourceLocator
 			searchWorkflows,
+			// Provide credentials search capability for the credential resourceLocator
+			searchCredentials,
+		},
+		resourceMapping: {
+			// Provide the fields of the selected credential's type for 'Credential Data'
+			getCredentialFields,
 		},
 	};
 }

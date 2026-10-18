@@ -21,5 +21,8 @@ describe('Test N8n Node', () => {
 			.reply(201);
 	});
 
-	new NodeTestHarness().setupTests({ credentials });
+	new NodeTestHarness().setupTests({
+		credentials,
+		workflowFiles: ['workflow.n8n.workflows.json'],
+	});
 });
