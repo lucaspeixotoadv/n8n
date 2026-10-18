@@ -16,5 +16,8 @@ describe('Test N8n Node', () => {
 		nock(baseUrl).get('/workflows?tags=n8n-test').reply(200, { data: apiResponse });
 	});
 
-	new NodeTestHarness().setupTests({ credentials });
+	new NodeTestHarness().setupTests({
+		credentials,
+		workflowFiles: ['workflow.n8n.workflows.json'],
+	});
 });

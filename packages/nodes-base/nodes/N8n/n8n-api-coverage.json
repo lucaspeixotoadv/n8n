@@ -42,17 +42,20 @@
 			"status": "gap"
 		},
 		"GET /credentials": {
-			"status": "gap"
+			"status": "covered",
+			"nodeOperation": "credential:update"
 		},
 		"GET /credentials/{credentialId}": {
-			"status": "gap"
+			"status": "covered",
+			"nodeOperation": "credential:update"
 		},
 		"POST /credentials": {
 			"status": "covered",
 			"nodeOperation": "credential:create"
 		},
 		"PATCH /credentials/{credentialId}": {
-			"status": "gap"
+			"status": "covered",
+			"nodeOperation": "credential:update"
 		},
 		"DELETE /credentials/{credentialId}": {
 			"status": "covered",
