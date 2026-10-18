@@ -25,6 +25,7 @@ import {
 	DEFAULT_TRUSTED_SOURCE_ID,
 	listRedirectLoginTrustedSources,
 } from '../../../utils/trusted-source';
+import { ignoreBotsOption } from '../../Webhook/description';
 import { cssVariables } from '../cssVariables';
 import { FORM_TRIGGER_AUTHENTICATION_PROPERTY } from '../interfaces';
 import { formWebhook } from '../utils/utils';
@@ -231,13 +232,7 @@ const descriptionV2: INodeTypeDescription = {
 						},
 					},
 				},
-				{
-					displayName: 'Ignore Bots',
-					name: 'ignoreBots',
-					type: 'boolean',
-					default: false,
-					description: 'Whether to ignore requests from bots like link previewers and web crawlers',
-				},
+				ignoreBotsOption,
 				{
 					displayName: 'Include User in Output',
 					name: 'includeUserInOutput',

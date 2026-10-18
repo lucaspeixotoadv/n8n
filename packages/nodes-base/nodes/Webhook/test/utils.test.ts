@@ -13,6 +13,7 @@ import {
 
 import type { WebhookParameters } from '../utils';
 import {
+	checkRequestGates,
 	checkResponseModeConfiguration,
 	configuredOutputs,
 	generateBasicAuthToken,
@@ -1177,6 +1178,50 @@ describe('Auth token generation', () => {
 
 			expect(token1).not.toBe(token2);
 			expect(token1).not.toBe(token3);
+		});
+	});
+
+	describe('checkRequestGates', () => {
+		const CRAWLER = 'Googlebot/2.1 (+http://www.google.com/bot.html)';
+
+		const request = (ip: string, userAgent = 'curl/8.4.0') => ({
+			ip,
+			ips: [],
+			headers: { 'user-agent': userAgent },
+		});
+
+		it('passes a request that no gate rejects', () => {
+			expect(checkRequestGates(request('203.0.113.10'), {})).toBeNull();
+		});
+
+		it('rejects an address outside the allowlist', () => {
+			expect(checkRequestGates(request('203.0.113.10'), { ipWhitelist: '198.51.100.0/24' })).toBe(
+				'ip',
+			);
+		});
+
+		it('accepts an address inside the allowlist', () => {
+			expect(
+				checkRequestGates(request('203.0.113.10'), { ipWhitelist: '203.0.113.0/24' }),
+			).toBeNull();
+		});
+
+		it('rejects a known crawler while the option is on', () => {
+			expect(checkRequestGates(request('203.0.113.10', CRAWLER), { ignoreBots: true })).toBe('bot');
+		});
+
+		it('accepts a known crawler while the option is off', () => {
+			expect(checkRequestGates(request('203.0.113.10', CRAWLER), {})).toBeNull();
+		});
+
+		// A blocked address must never reach the user-agent check or the credentials check.
+		it('reports the address gate first when both reject', () => {
+			expect(
+				checkRequestGates(request('203.0.113.10', CRAWLER), {
+					ipWhitelist: '198.51.100.0/24',
+					ignoreBots: true,
+				}),
+			).toBe('ip');
 		});
 	});
 });
