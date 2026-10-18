@@ -15,7 +15,7 @@ import type {
 } from '@n8n/db';
 import { Container } from '@n8n/di';
 import { QueryFailedError } from '@n8n/typeorm';
-import type { IRun, IRunData, IRunExecutionData, ITaskData } from 'n8n-workflow';
+import type { ExecutionStatus, IRun, IRunData, IRunExecutionData, ITaskData } from 'n8n-workflow';
 import { ManualExecutionCancelledError, WorkflowOperationError } from 'n8n-workflow';
 import { mock } from 'vitest-mock-extended';
 
@@ -998,6 +998,138 @@ describe('ExecutionService', () => {
 						{ requireStatus: 'running' },
 					);
 				});
+			});
+		});
+
+		describe('waiting sub-executions', () => {
+			const buildExecution = (
+				id: string,
+				options: { parentId?: string; childIds?: string[]; status?: ExecutionStatus } = {},
+			) =>
+				({
+					id,
+					workflowId: `workflow-${id}`,
+					mode: 'integrated',
+					status: options.status ?? 'waiting',
+					data: {
+						resultData: {},
+						parentExecution: options.parentId
+							? { executionId: options.parentId, workflowId: `workflow-${options.parentId}` }
+							: undefined,
+						executionData: {
+							nodeExecutionStack: [{ metadata: { waitingChildExecutionIds: options.childIds } }],
+						},
+					},
+				}) as unknown as IExecutionResponse;
+
+			const storeExecutions = (...executions: IExecutionResponse[]) => {
+				executionPersistence.findSingleExecution.mockImplementation((async (id: string) => {
+					const execution = executions.find((candidate) => candidate.id === id);
+					if (execution?.id === 'unreadable') throw new Error('read failed');
+					return execution;
+				}) as typeof executionPersistence.findSingleExecution);
+			};
+
+			const stoppedIds = () =>
+				executionPersistence.updateExistingExecution.mock.calls.map(([id]) => id);
+
+			beforeEach(() => {
+				concurrencyControl.has.mockReturnValue(false);
+				activeExecutions.has.mockReturnValue(false);
+				waitTracker.has.mockReturnValue(true);
+				executionPersistence.updateExistingExecution.mockResolvedValue(true);
+			});
+
+			it('stops the sub-executions that a stopped waiting execution waits on', async () => {
+				const parent = buildExecution('1', { childIds: ['2'] });
+				const child = buildExecution('2', { parentId: '1' });
+				executionPersistence.findWithUnflattenedData.mockResolvedValue(parent);
+				storeExecutions(child);
+
+				const result = await executionService.stop(parent.id, [parent.workflowId]);
+
+				expect(result.status).toBe('canceled');
+				expect(stoppedIds()).toEqual(['1', '2']);
+				expect(waitTracker.stopExecution).toHaveBeenCalledWith('2');
+				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
+					'2',
+					expect.objectContaining({ status: 'canceled' }),
+					{ requireStatus: 'waiting' },
+				);
+			});
+
+			it('does not stop a listed execution that points to a different parent', async () => {
+				const parent = buildExecution('1', { childIds: ['2'] });
+				const unrelated = buildExecution('2', { parentId: '99' });
+				executionPersistence.findWithUnflattenedData.mockResolvedValue(parent);
+				storeExecutions(unrelated);
+
+				await executionService.stop(parent.id, [parent.workflowId]);
+
+				expect(stoppedIds()).toEqual(['1']);
+			});
+
+			it('does not stop a listed sub-execution that has already finished', async () => {
+				const parent = buildExecution('1', { childIds: ['2'] });
+				const finished = buildExecution('2', { parentId: '1', status: 'success' });
+				executionPersistence.findWithUnflattenedData.mockResolvedValue(parent);
+				storeExecutions(finished);
+
+				await executionService.stop(parent.id, [parent.workflowId]);
+
+				expect(stoppedIds()).toEqual(['1']);
+			});
+
+			it('stops nested sub-executions', async () => {
+				const parent = buildExecution('1', { childIds: ['2'] });
+				const child = buildExecution('2', { parentId: '1', childIds: ['3'] });
+				const grandchild = buildExecution('3', { parentId: '2' });
+				executionPersistence.findWithUnflattenedData.mockResolvedValue(parent);
+				storeExecutions(child, grandchild);
+
+				await executionService.stop(parent.id, [parent.workflowId]);
+
+				expect(stoppedIds()).toEqual(['1', '2', '3']);
+			});
+
+			it('keeps the parent stopped and continues when a sub-execution cannot be read', async () => {
+				const parent = buildExecution('1', { childIds: ['unreadable', '3'] });
+				const unreadable = buildExecution('unreadable', { parentId: '1' });
+				const child = buildExecution('3', { parentId: '1' });
+				executionPersistence.findWithUnflattenedData.mockResolvedValue(parent);
+				storeExecutions(unreadable, child);
+
+				const result = await executionService.stop(parent.id, [parent.workflowId]);
+
+				expect(result.status).toBe('canceled');
+				expect(stoppedIds()).toEqual(['1', '3']);
+			});
+
+			it('does not look up sub-executions when the stopped execution was running', async () => {
+				const parent = buildExecution('1', { childIds: ['2'], status: 'running' });
+				activeExecutions.has.mockReturnValue(true);
+				waitTracker.has.mockReturnValue(false);
+				executionPersistence.findWithUnflattenedData.mockResolvedValue(parent);
+
+				await executionService.stop(parent.id, [parent.workflowId]);
+
+				expect(executionPersistence.findSingleExecution).not.toHaveBeenCalled();
+				expect(stoppedIds()).toEqual(['1']);
+			});
+
+			it('stops sub-executions of workflows outside the access list of the caller', async () => {
+				const parent = buildExecution('1', { childIds: ['2'] });
+				const child = buildExecution('2', { parentId: '1' });
+				executionPersistence.findWithUnflattenedData.mockResolvedValue(parent);
+				storeExecutions(child);
+
+				await executionService.stop(parent.id, ['workflow-1']);
+
+				expect(executionPersistence.findSingleExecution).toHaveBeenCalledWith('2', {
+					includeData: true,
+					unflattenData: true,
+				});
+				expect(stoppedIds()).toEqual(['1', '2']);
 			});
 		});
 	});
