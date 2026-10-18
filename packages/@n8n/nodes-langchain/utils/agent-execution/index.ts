@@ -8,7 +8,7 @@
  * delegated to the n8n workflow engine instead of being executed inline.
  */
 
-export { createEngineRequests } from './createEngineRequests';
+export { createEngineRequests, buildSyntheticToolCallId } from './createEngineRequests';
 export { executeEngineAction } from './executeEngineAction';
 export { buildResponseMetadata } from './buildResponseMetadata';
 export { buildSteps } from './buildSteps';
