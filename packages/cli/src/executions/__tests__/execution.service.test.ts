@@ -716,7 +716,7 @@ describe('ExecutionService', () => {
 					}
 					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledExactlyOnceWith(
 						execution.id,
-						execution,
+						{ status: 'canceled', stoppedAt: expect.any(Date), waitTill: null },
 						{ requireStatus: 'running' },
 					);
 				},
@@ -862,9 +862,15 @@ describe('ExecutionService', () => {
 					expect.any(ManualExecutionCancelledError),
 				);
 				expect(waitTracker.stopExecution).not.toHaveBeenCalled();
+				// Only status columns: the engine owns the run data, and writing back the copy
+				// read here would overwrite its account of the run with a stale one.
 				expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
 					execution.id,
-					execution,
+					{
+						status: 'canceled',
+						stoppedAt: expect.any(Date),
+						waitTill: null,
+					},
 					{ requireStatus: 'running' },
 				);
 			});
@@ -904,6 +910,10 @@ describe('ExecutionService', () => {
 					execution.id,
 					execution,
 					{ requireStatus: 'waiting' },
+				);
+				// A waiting execution has no engine running it, so its stored data carries the error.
+				expect(execution.data.resultData.error).toEqual(
+					expect.objectContaining({ message: expect.any(String) }),
 				);
 			});
 
@@ -977,7 +987,11 @@ describe('ExecutionService', () => {
 					);
 					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
 						execution.id,
-						execution,
+						{
+							status: 'canceled',
+							stoppedAt: expect.any(Date),
+							waitTill: null,
+						},
 						{ requireStatus: 'running' },
 					);
 
@@ -1080,7 +1094,11 @@ describe('ExecutionService', () => {
 					// The canceled status is still persisted by the main process.
 					expect(executionPersistence.updateExistingExecution).toHaveBeenCalledWith(
 						execution.id,
-						execution,
+						{
+							status: 'canceled',
+							stoppedAt: expect.any(Date),
+							waitTill: null,
+						},
 						{ requireStatus: 'running' },
 					);
 				});

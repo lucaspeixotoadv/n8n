@@ -1369,7 +1369,7 @@ describe('Execution Lifecycle Hooks', () => {
 							finished: true,
 							status: 'success',
 						}),
-						{ requireNotCanceled: true },
+						{ preserveCancellation: true },
 					);
 				});
 
