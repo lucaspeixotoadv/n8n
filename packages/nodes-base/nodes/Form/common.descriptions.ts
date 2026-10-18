@@ -1,6 +1,7 @@
 import type { INodeProperties, INodePropertyCollection, INodePropertyOptions } from 'n8n-workflow';
 
 import { appendAttributionOption } from '../../utils/descriptions';
+import { ipWhitelistOption } from '../Webhook/description';
 
 // Shared form element types used in both formFields and formFieldsDynamic
 export const formElementTypes: INodePropertyOptions[] = [
@@ -93,15 +94,8 @@ export const formDescription: INodeProperties = {
 	},
 };
 
-export const ipAllowlist: INodeProperties = {
-	displayName: 'IP(s) Allowlist',
-	name: 'ipWhitelist',
-	type: 'string',
-	placeholder: 'e.g. 127.0.0.1, 192.168.1.0/24',
-	default: '',
-	description:
-		'Comma-separated list of allowed IP addresses or CIDR ranges. Leave empty to allow all IPs.',
-};
+/** The allowlist every public endpoint offers, under the name the form nodes use for it. */
+export const ipAllowlist = ipWhitelistOption;
 
 const formOptions: INodePropertyCollection[] = [
 	{

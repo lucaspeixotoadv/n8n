@@ -1,7 +1,6 @@
 /* eslint-disable n8n-nodes-base/node-execute-block-wrong-error-thrown */
 import { createWriteStream } from 'fs';
 import { stat } from 'fs/promises';
-import isbot from 'isbot';
 import type {
 	IWebhookFunctions,
 	IDataObject,
@@ -39,10 +38,11 @@ import {
 } from './description';
 import { WebhookAuthorizationError } from './error';
 import {
+	checkRequestGates,
 	checkResponseModeConfiguration,
 	configuredOutputs,
 	handleFormData,
-	isIpAllowed,
+	requestMatchesOnlyRunIf,
 	setupOutputConnection,
 	validateWebhookAuthentication,
 } from './utils';
@@ -242,7 +242,8 @@ export class Webhook extends Node {
 		const resp = context.getResponseObject();
 		const requestMethod = context.getRequestObject().method;
 
-		if (!isIpAllowed(options.ipWhitelist, req.ips, req.ip)) {
+		const rejectedBy = checkRequestGates(req, options);
+		if (rejectedBy === 'ip') {
 			resp.writeHead(403);
 			resp.end('IP is not allowed to access the webhook!');
 			return { noWebhookResponse: true };
@@ -250,8 +251,7 @@ export class Webhook extends Node {
 
 		let validationData: IDataObject | undefined;
 		try {
-			if (options.ignoreBots && isbot(req.headers['user-agent']))
-				throw new WebhookAuthorizationError(403);
+			if (rejectedBy === 'bot') throw new WebhookAuthorizationError(403);
 			if (context.getNodeParameter('authentication', 'none') === 'n8nOAuth2') {
 				// Two-step n8n user-auth flow: (1) validate the bearer token and resolve
 				// the caller to an n8n user, then (2) seed the execution context so the
@@ -284,20 +284,7 @@ export class Webhook extends Node {
 			throw error;
 		}
 
-		const node = context.getNode();
-		const rawOptions = node.parameters?.options as { onlyRunIf?: unknown } | undefined;
-		const rawOnlyRunIf = rawOptions?.onlyRunIf;
-		if (typeof rawOnlyRunIf === 'string' && rawOnlyRunIf.startsWith('=')) {
-			try {
-				const result = context.evaluateExpression(rawOnlyRunIf.slice(1), 0);
-				if (!result) return {};
-			} catch (error) {
-				context.logger.warn(
-					`Webhook "Only Run If" expression failed to evaluate; allowing request through. ${(error as Error).message}`,
-					{ nodeName: node.name },
-				);
-			}
-		}
+		if (!requestMatchesOnlyRunIf(context)) return {};
 
 		const prepareOutput = setupOutputConnection(context, requestMethod, {
 			jwtPayload: validationData,

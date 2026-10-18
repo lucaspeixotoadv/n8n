@@ -1,6 +1,6 @@
 import { Logger } from '@n8n/backend-common';
 import { EventService } from '@n8n/backend-services';
-import { ExecutionsConfig, GlobalConfig } from '@n8n/config';
+import { ExecutionsConfig } from '@n8n/config';
 import type { Project } from '@n8n/db';
 import { UserRepository } from '@n8n/db';
 import { Container } from '@n8n/di';
@@ -72,7 +72,6 @@ import {
 	UnsupportedMediaTypeError,
 } from '@n8n/errors';
 import { createExecutionIdV2, type ExecutionIdV2 } from '@/executions/execution-id';
-import { parseBody } from '@/middlewares';
 import { WebhookResponseRelay } from '@/scaling/webhook-response-relay';
 import { EngineV2PayloadFiles } from '@/services/engine-v2-payload-files.service';
 import {
@@ -88,7 +87,7 @@ import { WorkflowStatisticsService } from '@/services/workflow-statistics.servic
 import { WaitTracker } from '@/wait-tracker';
 import { EXECUTION_ENDED_WITHOUT_RESPONSE } from '@/webhooks/constants';
 import { WebhookExecutionContext } from '@/webhooks/webhook-execution-context';
-import { createMultiFormDataParser } from '@/webhooks/webhook-form-data';
+import { parseWebhookRequestBody } from '@/webhooks/webhook-request-body';
 import { extractWebhookLastNodeResponse } from '@/webhooks/webhook-last-node-response-extractor';
 import { extractWebhookOnReceivedResponse } from '@/webhooks/webhook-on-received-response-extractor';
 import { createStaticResponse, createStreamResponse } from '@/webhooks/webhook-response';
@@ -98,11 +97,7 @@ import { WorkflowRunner } from '@/workflow-runner';
 
 import { toResponseExpectation } from './engine-v2-response-expectation';
 import { EngineV2Webhooks } from './engine-v2-webhooks';
-import {
-	applySandboxCSP,
-	WebhookResponseHeaders,
-	type WebhookNodeResponseHeaders,
-} from './webhook-response-headers';
+import { applySandboxCSP, WebhookResponseHeaders } from './webhook-response-headers';
 import {
 	WebhookResponder,
 	type WebhookResponseCallback,
@@ -418,9 +413,6 @@ export const handleFormRedirectionCase = <T extends IWebhookResponseCallbackData
 
 	return data;
 };
-
-const { formDataFileSizeMax } = Container.get(GlobalConfig).endpoints;
-const parseFormData = createMultiFormDataParser(formDataFileSizeMax);
 
 function isHttpFullResponse(response: unknown): response is IN8nHttpFullResponse {
 	// A missing body means that the response has an empty body.
@@ -1136,7 +1128,7 @@ export async function executeWebhook(
 		}
 		cleanupMultipartFiles = undefined;
 
-		const responseHeaders = evaluateResponseHeaders(context);
+		const responseHeaders = context.evaluateResponseHeaders();
 
 		if (!res.headersSent && responseHeaders) {
 			// Only set given headers if they haven't been sent yet, e.g. for streaming
@@ -1658,18 +1650,6 @@ function requiresMultipartFormData(node: INode): boolean {
 	);
 }
 
-function isParsableContentType(contentType: string | undefined): boolean {
-	if (!contentType) return false;
-
-	return (
-		contentType.startsWith('application/json') ||
-		contentType.startsWith('text/plain') ||
-		contentType.startsWith('application/x-www-form-urlencoded') ||
-		contentType.endsWith('/xml') ||
-		contentType.endsWith('+xml')
-	);
-}
-
 /**
  * Parses the request body (form, xml, json, form-urlencoded, etc.) if needed
  * into the `req.body` property.
@@ -1702,39 +1682,7 @@ async function parseRequestBody(
 		return;
 	}
 
-	const { contentType } = req;
-	if (contentType === 'multipart/form-data') {
-		const { body, cleanup } = await parseFormData(req);
-		req.body = body;
-		return cleanup;
-	}
-
-	if (nodeVersion > 1 && !isParsableContentType(contentType)) return undefined;
-
-	await parseBody(req);
-
-	return undefined;
-}
-
-/**
- * Evaluates the `responseHeaders` parameter of a webhook node
- */
-function evaluateResponseHeaders(context: WebhookExecutionContext): WebhookResponseHeaders {
-	const headers = new WebhookResponseHeaders();
-
-	if (context.webhookData.webhookDescription.responseHeaders === undefined) {
-		return headers;
-	}
-
-	const evaluatedHeaders =
-		context.evaluateComplexWebhookDescriptionExpression<WebhookNodeResponseHeaders>(
-			'responseHeaders',
-		);
-	if (evaluatedHeaders) {
-		headers.addFromNodeHeaders(evaluatedHeaders);
-	}
-
-	return headers;
+	return await parseWebhookRequestBody(req, nodeVersion);
 }
 
 /**
