@@ -1,5 +1,12 @@
 import type { LlmTokenUsageData } from '@/Interface';
-import { addTokenUsageData, formatTokenUsageCount, parseAiContent } from '@/app/utils/aiUtils';
+import {
+	addTokenUsageData,
+	formatTokenUsageCost,
+	formatTokenUsageCount,
+	invocationToTokenUsageData,
+	parseAiContent,
+	toTokenUsageData,
+} from '@/app/utils/aiUtils';
 import { NodeConnectionTypes } from 'n8n-workflow';
 
 describe(parseAiContent, () => {
@@ -112,6 +119,109 @@ describe(addTokenUsageData, () => {
 			...usageData,
 			isEstimate: true,
 		});
+	});
+});
+
+describe('addTokenUsageData breakdowns and cost', () => {
+	const base = { completionTokens: 1, promptTokens: 1, totalTokens: 2, isEstimate: false };
+
+	it('sums cache and reasoning breakdowns only when at least one side has them', () => {
+		expect(addTokenUsageData(base, base)).not.toHaveProperty('cacheReadTokens');
+		expect(
+			addTokenUsageData(
+				{ ...base, cacheReadTokens: 3, reasoningTokens: 1 },
+				{ ...base, cacheReadTokens: 4 },
+			),
+		).toMatchObject({ cacheReadTokens: 7, reasoningTokens: 1 });
+	});
+
+	it('sums costs and keeps the sum complete only when every priced side is complete', () => {
+		const priced = { ...base, cost: { amount: 0.5, currency: 'USD' as const, isComplete: true } };
+
+		expect(addTokenUsageData(priced, priced).cost).toEqual({
+			amount: 1,
+			currency: 'USD',
+			isComplete: true,
+		});
+	});
+
+	it('marks the cost incomplete when usage without a cost is added', () => {
+		const priced = { ...base, cost: { amount: 0.5, currency: 'USD' as const, isComplete: true } };
+
+		expect(addTokenUsageData(priced, base).cost).toEqual({
+			amount: 0.5,
+			currency: 'USD',
+			isComplete: false,
+		});
+	});
+
+	it('does not let an empty usage make a cost incomplete', () => {
+		const priced = { ...base, cost: { amount: 0.5, currency: 'USD' as const, isComplete: true } };
+		const empty = { completionTokens: 0, promptTokens: 0, totalTokens: 0, isEstimate: false };
+
+		expect(addTokenUsageData(empty, priced).cost).toEqual({
+			amount: 0.5,
+			currency: 'USD',
+			isComplete: true,
+		});
+	});
+});
+
+describe(toTokenUsageData, () => {
+	it('maps a published summary, dropping zero breakdowns and keeping cost completeness', () => {
+		expect(
+			toTokenUsageData({
+				invocations: 2,
+				tokens: {
+					promptTokens: 100,
+					completionTokens: 50,
+					totalTokens: 150,
+					cacheReadTokens: 40,
+					cacheWriteTokens: 0,
+					reasoningTokens: 10,
+				},
+				tokensEstimated: false,
+				tokensComplete: true,
+				cost: { amount: 0.25, currency: 'USD' },
+				costComplete: false,
+			}),
+		).toEqual({
+			promptTokens: 100,
+			completionTokens: 50,
+			totalTokens: 150,
+			isEstimate: false,
+			cacheReadTokens: 40,
+			reasoningTokens: 10,
+			cost: { amount: 0.25, currency: 'USD', isComplete: false },
+		});
+	});
+});
+
+describe(invocationToTokenUsageData, () => {
+	it('maps one run item with its cost', () => {
+		expect(
+			invocationToTokenUsageData({
+				tokens: { promptTokens: 10, completionTokens: 5, totalTokens: 15, cacheReadTokens: 2 },
+				isEstimate: false,
+				cost: { amount: 0.01, currency: 'USD', source: 'catalog' },
+			}),
+		).toEqual({
+			promptTokens: 10,
+			completionTokens: 5,
+			totalTokens: 15,
+			isEstimate: false,
+			cacheReadTokens: 2,
+			cost: { amount: 0.01, currency: 'USD', isComplete: true },
+		});
+	});
+});
+
+describe(formatTokenUsageCost, () => {
+	it('formats US dollars with enough precision for small amounts', () => {
+		expect(formatTokenUsageCost({ amount: 0.001234, currency: 'USD', isComplete: true })).toBe(
+			'$0.001234',
+		);
+		expect(formatTokenUsageCost({ amount: 1.5, currency: 'USD', isComplete: true })).toBe('$1.50');
 	});
 });
 

@@ -18,12 +18,14 @@ import type {
 	IWorkflowBase,
 	IWorkflowDataProxyData,
 	ResourceMapperValue,
+	LlmUsageSummary,
 } from 'n8n-workflow';
 import {
 	jsonParse,
 	NodeConnectionTypes,
 	NodeOperationError,
 	parseErrorMetadata,
+	llmUsageAggregateFromSubtree,
 } from 'n8n-workflow';
 
 import { createZodSchemaFromArgs, extractFromAIParameters, logAiEvent } from '@n8n/ai-utilities';
@@ -48,6 +50,9 @@ export class WorkflowToolService {
 
 	// Sub-workflow execution id, will be set after the sub-workflow is executed
 	private subExecutionId: string | undefined;
+
+	// LLM usage of the last sub-workflow execution, published on this tool's run
+	private subExecutionLlmUsage: LlmUsageSummary | undefined;
 
 	private returnAllItems: boolean = false;
 
@@ -174,6 +179,11 @@ export class WorkflowToolService {
 								executionId: this.subExecutionId,
 								workflowId: this.subWorkflowId,
 							},
+							// The sub-workflow's agents count as this tool's sub-agents, so the
+							// calling agent folds them into its own aggregate like any sub-agent.
+							...(this.subExecutionLlmUsage && {
+								llmUsage: llmUsageAggregateFromSubtree(this.subExecutionLlmUsage),
+							}),
 						};
 					}
 
@@ -293,6 +303,7 @@ export class WorkflowToolService {
 			});
 			// Set sub-workflow execution id so it can be used in other places
 			this.subExecutionId = receivedData.executionId;
+			this.subExecutionLlmUsage = receivedData.llmUsage;
 		} catch (error) {
 			throw new NodeOperationError(context.getNode(), error as Error);
 		}

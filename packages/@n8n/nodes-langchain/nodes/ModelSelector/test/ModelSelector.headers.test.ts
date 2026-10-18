@@ -46,8 +46,8 @@ describe('ModelSelector Node header handling', () => {
 		const attached = (response as BaseChatModel).callbacks as Array<{
 			handleLLMStart: (llm: Serialized, prompts: string[], runId: string) => Promise<void>;
 		}>;
-		// the tracer the Model Selector attached on top of the model's own callbacks
-		await attached[attached.length - 1].handleLLMStart(serializedModel, ['hello'], 'run-123');
+		// the tracer the Model Selector attached in front of the model's own callbacks
+		await attached[0].handleLLMStart(serializedModel, ['hello'], 'run-123');
 
 		const inputArg = selectorContext.addInputData.mock.calls[0][1] as Array<
 			Array<{ json: { options: { configuration: { defaultHeaders: Record<string, string> } } } }>

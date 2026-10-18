@@ -7,7 +7,8 @@ import { mock } from 'vitest-mock-extended';
 import { ModelSelector } from '../ModelSelector.node';
 
 // Mock the N8nLlmTracing module completely to avoid module resolution issues
-vi.mock('@n8n/ai-utilities', () => ({
+vi.mock('@n8n/ai-utilities', async () => ({
+	...(await vi.importActual<typeof import('@n8n/ai-utilities')>('@n8n/ai-utilities')),
 	N8nLlmTracing: vi.fn().mockImplementation(() => ({
 		handleLLMStart: vi.fn(),
 		handleLLMEnd: vi.fn(),

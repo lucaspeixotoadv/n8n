@@ -15,7 +15,7 @@ import {
 } from 'n8n-workflow';
 
 import { numberInputsProperty, configuredInputs } from './helpers';
-import { N8nLlmTracing } from '@n8n/ai-utilities';
+import { isParentRunIndexAware, type ParentRunIndexAware } from '@n8n/ai-utilities';
 import { N8nNonEstimatingTracing } from '../llms/N8nNonEstimatingTracing';
 
 interface ModeleSelectionRule {
@@ -209,18 +209,25 @@ export class ModelSelector implements INodeType {
 				const selectedModel = models[modelIndex - 1] as BaseChatModel;
 
 				const originalCallbacks = getCallbacksArray(selectedModel.callbacks);
-
-				for (const currentCallback of originalCallbacks) {
-					if (currentCallback instanceof N8nLlmTracing) {
-						currentCallback.setParentRunIndex(this.getNextRunIndex());
-					}
-				}
+				const childTracers = originalCallbacks.filter(
+					(callback): callback is typeof callback & ParentRunIndexAware =>
+						isParentRunIndexAware(callback),
+				);
 
 				// This node records the same serialized model as the model's own tracer,
 				// so it masks whatever header names that tracer declares.
 				const redactedHeaders = originalCallbacks.flatMap(getDeclaredRedactedHeaders);
-				const modelSelectorTracing = new N8nNonEstimatingTracing(this, { redactedHeaders });
-				selectedModel.callbacks = [...originalCallbacks, modelSelectorTracing];
+				const modelSelectorTracing = new N8nNonEstimatingTracing(this, {
+					redactedHeaders,
+					// Every invocation opens one run of this node; the model's own run must point
+					// to that exact run, whatever either node ran before. LangChain hands both
+					// tracers the same run id, so the pin is made per invocation.
+					onRunStarted: (runId, runIndex) => {
+						for (const tracer of childTracers) tracer.setParentRunIndexForRun(runId, runIndex);
+					},
+				});
+				// First, so its run is open (and pinned) before the model's tracer records its own
+				selectedModel.callbacks = [modelSelectorTracing, ...originalCallbacks];
 
 				return {
 					response: selectedModel,

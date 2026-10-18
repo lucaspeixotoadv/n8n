@@ -1,6 +1,6 @@
 import type { Serialized } from '@langchain/core/load/serializable';
 import type { BaseMessage } from '@langchain/core/messages';
-import type { LLMResult } from '@langchain/core/outputs';
+import type { ChatGeneration, LLMResult } from '@langchain/core/outputs';
 import type { INode, ISupplyDataFunctions } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import type { Mock, Mocked } from 'vitest';
@@ -480,6 +480,7 @@ describe('N8nLlmTracing', () => {
 					'llm.tokens.out': 30,
 					'llm.tokens.total': 80,
 					'llm.tokens.estimated': false,
+					'llm.cost.unavailable_reason': 'unknown-provider',
 				},
 			});
 		});
@@ -519,8 +520,10 @@ describe('N8nLlmTracing', () => {
 					'llm.tokens.out': 25,
 					'llm.tokens.total': 75,
 					'llm.tokens.estimated': true,
+					'llm.cost.unavailable_reason': 'estimated-usage',
 				},
 			});
+			expect(outputData.cost).toBeUndefined();
 		});
 
 		it('should handle string messages', async () => {
@@ -649,6 +652,8 @@ describe('N8nLlmTracing', () => {
 				NodeConnectionTypes.AiLanguageModel,
 				0,
 				error,
+				undefined,
+				undefined,
 			);
 
 			expect(logAiEvent).toHaveBeenCalledWith(
@@ -679,6 +684,8 @@ describe('N8nLlmTracing', () => {
 				NodeConnectionTypes.AiLanguageModel,
 				0,
 				expect.any(NodeOperationError),
+				undefined,
+				undefined,
 			);
 		});
 
@@ -788,6 +795,55 @@ describe('N8nLlmTracing', () => {
 		});
 	});
 
+	describe('setParentRunIndexForRun', () => {
+		const llm: Serialized = { lc: 1, type: 'constructor', id: ['test'], kwargs: {} };
+
+		it('points the run to the parent run pinned for that invocation, whatever ran before', async () => {
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			// The model already ran twice under another parent run
+			mockExecutionFunctions.getNextRunIndex.mockReturnValue(2);
+			mockExecutionFunctions.addInputData.mockReturnValue({ index: 2 });
+			tracer.setParentRunIndexForRun('run-abc', 5);
+
+			await tracer.handleLLMStart(llm, ['prompt'], 'run-abc');
+			await tracer.handleLLMEnd(
+				{
+					generations: [[{ text: 'ok' }]],
+					llmOutput: { tokenUsage: { promptTokens: 1, completionTokens: 1 } },
+				},
+				'run-abc',
+			);
+
+			expect(mockExecutionFunctions.addInputData).toHaveBeenCalledWith(
+				NodeConnectionTypes.AiLanguageModel,
+				expect.any(Array),
+				5,
+			);
+			expect(mockExecutionFunctions.addOutputData).toHaveBeenCalledWith(
+				NodeConnectionTypes.AiLanguageModel,
+				2,
+				expect.any(Array),
+				undefined,
+				5,
+			);
+		});
+
+		it('consumes the pin, so a later unpinned invocation is not attributed to it', async () => {
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			tracer.setParentRunIndexForRun('run-1', 5);
+
+			await tracer.handleLLMStart(llm, ['a'], 'run-1');
+			await tracer.handleLLMStart(llm, ['b'], 'run-2');
+
+			expect(mockExecutionFunctions.addInputData).toHaveBeenNthCalledWith(
+				2,
+				NodeConnectionTypes.AiLanguageModel,
+				expect.any(Array),
+				undefined,
+			);
+		});
+	});
+
 	describe('setParentRunIndex', () => {
 		it('should set parent run index', () => {
 			const tracer = new N8nLlmTracing(mockExecutionFunctions);
@@ -836,8 +892,8 @@ describe('N8nLlmTracing', () => {
 				completionTokens: 100,
 				promptTokens: 50,
 				totalTokens: 150,
-				cost: 0.0042,
 			});
+			expect(outputData.cost).toEqual({ amount: 0.0042, currency: 'USD', source: 'provider' });
 			expect(
 				(mockExecutionFunctions as unknown as { setMetadata: Mock }).setMetadata,
 			).toHaveBeenCalledWith({
@@ -847,8 +903,43 @@ describe('N8nLlmTracing', () => {
 					'llm.tokens.total': 150,
 					'llm.tokens.estimated': false,
 					'llm.cost.total': 0.0042,
+					'llm.cost.source': 'provider',
 				},
 			});
+		});
+
+		it('should call the parser before generations are stripped down to text/generationInfo', async () => {
+			// Providers like Google Gemini only report usage (incl. cached tokens)
+			// on the generation message, which handleLLMEnd strips from the output
+			// payload — the parser must run first to still see it.
+			let messageSeenByParser: unknown;
+			const customParser = vi.fn().mockImplementation((result: LLMResult) => {
+				messageSeenByParser = (result.generations[0][0] as { message?: unknown }).message;
+				return { completionTokens: 1, promptTokens: 1, totalTokens: 2 };
+			});
+
+			const tracer = new N8nLlmTracing(mockExecutionFunctions, {
+				tokensUsageParser: customParser,
+			});
+
+			const runId = 'run-123';
+			tracer.runsMap[runId] = {
+				index: 0,
+				messages: ['Test'],
+				options: {},
+			};
+
+			const message = { usage_metadata: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } };
+			const output: LLMResult = {
+				generations: [[{ text: 'Response', message } as unknown as LLMResult['generations'][0][0]]],
+			};
+
+			await tracer.handleLLMEnd(output, runId);
+
+			expect(messageSeenByParser).toBe(message);
+			// The stripped payload sent downstream must not contain the message
+			const callArgs = mockExecutionFunctions.addOutputData.mock.calls[0] as any;
+			expect(callArgs[2][0][0].json.response.generations[0][0]).not.toHaveProperty('message');
 		});
 	});
 
@@ -886,7 +977,16 @@ describe('N8nLlmTracing', () => {
 					'llm.tokens.total': 15,
 					'llm.tokens.estimated': false,
 					'llm.cost.total': 0.123,
+					'llm.cost.source': 'provider',
 				},
+			});
+			const outputData = (mockExecutionFunctions.addOutputData.mock.calls[0] as any)[2][0][0].json;
+			expect(outputData.cost).toEqual({ amount: 0.123, currency: 'USD', source: 'provider' });
+			// The provider-reported number is not repeated inside the token counts
+			expect(outputData.tokenUsage).toEqual({
+				promptTokens: 5,
+				completionTokens: 10,
+				totalTokens: 15,
 			});
 		});
 
@@ -1009,6 +1109,188 @@ describe('N8nLlmTracing', () => {
 			expect(tracer.runsMap['run-1']).toBeDefined();
 			expect(tracer.runsMap['run-2']).toBeDefined();
 			expect(tracer.runsMap['run-3']).toBeDefined();
+		});
+	});
+
+	describe('cost from the model catalog', () => {
+		const openAiNode = (): INode => ({
+			...mockNode,
+			type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
+		});
+
+		function usageResult(usage: Record<string, unknown>): LLMResult {
+			return {
+				generations: [[{ text: 'Response', generationInfo: {} }]],
+				llmOutput: { tokenUsage: usage },
+			};
+		}
+
+		function runOutput() {
+			return (mockExecutionFunctions.addOutputData.mock.calls[0] as any)[2][0][0].json;
+		}
+
+		function tracingMetadata() {
+			return (mockExecutionFunctions as unknown as { setMetadata: Mock }).setMetadata.mock
+				.calls[0][0].tracing;
+		}
+
+		it('prices a known model of the node provider with the shipped catalog', async () => {
+			mockExecutionFunctions.getNode.mockReturnValue(openAiNode());
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			tracer.runsMap['run-1'] = { index: 0, messages: ['Test'], options: { model: 'gpt-4o' } };
+
+			await tracer.handleLLMEnd(
+				usageResult({
+					input_tokens: 1_000_000,
+					output_tokens: 100_000,
+					total_tokens: 1_100_000,
+					input_token_details: { cache_read: 400_000 },
+				}),
+				'run-1',
+			);
+
+			const output = runOutput();
+			expect(output.tokenUsage).toEqual({
+				promptTokens: 1_000_000,
+				completionTokens: 100_000,
+				totalTokens: 1_100_000,
+				cacheReadTokens: 400_000,
+			});
+			expect(output.cost).toMatchObject({
+				currency: 'USD',
+				source: 'catalog',
+				model: { provider: 'openai', id: 'gpt-4o' },
+				pricing: { input: 2.5, output: 10, cacheRead: 1.25 },
+			});
+			expect(output.cost.amount).toBeCloseTo(0.6 * 2.5 + 0.4 * 1.25 + 0.1 * 10);
+			expect(typeof output.cost.catalogVersion).toBe('string');
+			expect(tracingMetadata()).toMatchObject({
+				'llm.tokens.cache_read': 400_000,
+				'llm.model.provider': 'openai',
+				'llm.model.id': 'gpt-4o',
+				'llm.cost.source': 'catalog',
+			});
+		});
+
+		it('leaves the cost unavailable for a model the catalog does not know', async () => {
+			mockExecutionFunctions.getNode.mockReturnValue(openAiNode());
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			tracer.runsMap['run-1'] = {
+				index: 0,
+				messages: ['Test'],
+				options: { model: 'gpt-unreleased' },
+			};
+
+			await tracer.handleLLMEnd(
+				usageResult({ promptTokens: 10, completionTokens: 5, totalTokens: 15 }),
+				'run-1',
+			);
+
+			expect(runOutput().cost).toBeUndefined();
+			expect(runOutput().tokenUsage).toEqual({
+				promptTokens: 10,
+				completionTokens: 5,
+				totalTokens: 15,
+			});
+			expect(tracingMetadata()['llm.cost.unavailable_reason']).toBe('unknown-model');
+		});
+
+		it('uses an explicit model identity over the node type inference', async () => {
+			const tracer = new N8nLlmTracing(mockExecutionFunctions, {
+				model: { provider: 'anthropic', id: 'claude-sonnet-4-5-20250929' },
+			});
+			tracer.runsMap['run-1'] = { index: 0, messages: ['Test'], options: {} };
+
+			await tracer.handleLLMEnd(
+				usageResult({
+					input_tokens: 1_000_000,
+					output_tokens: 0,
+					total_tokens: 1_000_000,
+					input_token_details: { cache_creation: 200_000, cache_read: 300_000 },
+				}),
+				'run-1',
+			);
+
+			const output = runOutput();
+			expect(output.tokenUsage).toMatchObject({
+				cacheReadTokens: 300_000,
+				cacheWriteTokens: 200_000,
+			});
+			expect(output.cost.model).toEqual({
+				provider: 'anthropic',
+				id: 'claude-sonnet-4-5-20250929',
+			});
+			expect(output.cost.amount).toBeCloseTo(0.5 * 3 + 0.3 * 0.3 + 0.2 * 3.75);
+		});
+
+		it('prefers the cost the provider reported over the catalog', async () => {
+			mockExecutionFunctions.getNode.mockReturnValue(openAiNode());
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			tracer.runsMap['run-1'] = { index: 0, messages: ['Test'], options: { model: 'gpt-4o' } };
+
+			await tracer.handleLLMEnd(
+				usageResult({
+					promptTokens: 1_000_000,
+					completionTokens: 0,
+					totalTokens: 1_000_000,
+					cost: 0.5,
+				}),
+				'run-1',
+			);
+
+			expect(runOutput().cost).toEqual({
+				amount: 0.5,
+				currency: 'USD',
+				source: 'provider',
+				model: { provider: 'openai', id: 'gpt-4o' },
+			});
+		});
+
+		it('prices the model the provider reports having served, not the requested deployment name', async () => {
+			mockExecutionFunctions.getNode.mockReturnValue({
+				...mockNode,
+				type: '@n8n/n8n-nodes-langchain.lmChatAzureOpenAi',
+			});
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			tracer.runsMap['run-1'] = {
+				index: 0,
+				messages: ['Test'],
+				options: { model: 'my-prod-deployment' },
+			};
+			const { AIMessage } = await import('@langchain/core/messages');
+			const generation: ChatGeneration = {
+				text: 'Response',
+				message: new AIMessage({
+					content: 'Response',
+					response_metadata: { model_name: 'gpt-4o-2024-08-06' },
+					usage_metadata: {
+						input_tokens: 1_000_000,
+						output_tokens: 0,
+						total_tokens: 1_000_000,
+					},
+				}),
+			};
+
+			await tracer.handleLLMEnd({ generations: [[generation]] }, 'run-1');
+
+			expect(runOutput().cost).toMatchObject({
+				source: 'catalog',
+				model: { provider: 'azure', id: 'gpt-4o-2024-08-06' },
+			});
+			expect(runOutput().cost.amount).toBeCloseTo(2.5);
+		});
+
+		it('never prices an estimate', async () => {
+			mockExecutionFunctions.getNode.mockReturnValue(openAiNode());
+			const tracer = new N8nLlmTracing(mockExecutionFunctions);
+			tracer.runsMap['run-1'] = { index: 0, messages: ['Test'], options: { model: 'gpt-4o' } };
+			estimateTokensFromStringList.mockResolvedValue(25);
+
+			await tracer.handleLLMEnd({ generations: [[{ text: 'Response' }]], llmOutput: {} }, 'run-1');
+
+			expect(runOutput().tokenUsageEstimate).toBeDefined();
+			expect(runOutput().cost).toBeUndefined();
+			expect(tracingMetadata()['llm.cost.unavailable_reason']).toBe('estimated-usage');
 		});
 	});
 });

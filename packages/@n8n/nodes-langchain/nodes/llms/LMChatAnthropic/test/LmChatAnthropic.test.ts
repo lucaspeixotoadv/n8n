@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { ChatAnthropic } from '@langchain/anthropic';
-import type { LLMResult } from '@langchain/core/outputs';
 import {
 	makeN8nLlmFailedAttemptHandler,
 	N8nLlmTracing,
@@ -456,7 +455,7 @@ describe('LmChatAnthropic', () => {
 			);
 		});
 
-		it('should create N8nLlmTracing callback with tokens usage parser', async () => {
+		it('should create N8nLlmTracing callback on the default usage parser', async () => {
 			const mockContext = setupMockContext();
 
 			mockContext.getNodeParameter = vi.fn().mockImplementation((paramName: string) => {
@@ -467,12 +466,7 @@ describe('LmChatAnthropic', () => {
 
 			await lmChatAnthropic.supplyData.call(mockContext, 0);
 
-			expect(MockedN8nLlmTracing).toHaveBeenCalledWith(
-				mockContext,
-				expect.objectContaining({
-					tokensUsageParser: expect.any(Function),
-				}),
-			);
+			expect(MockedN8nLlmTracing).toHaveBeenCalledWith(mockContext, { redactedHeaders: [] });
 		});
 
 		it('should pass the declared header name to N8nLlmTracing', async () => {
@@ -1253,14 +1247,20 @@ describe('LmChatAnthropic', () => {
 		});
 
 		describe('token usage parser', () => {
+			// The node relies on the shared default parser, which reads the adapter's
+			// usage_metadata for streamed and non-streamed calls and falls back to the raw
+			// Anthropic usage block; this checks that fallback keeps Anthropic's semantics.
 			const parseUsage = async (usage?: Record<string, number>) => {
+				const { normalizeLlmResultUsage } =
+					await vi.importActual<typeof import('@n8n/ai-utilities')>('@n8n/ai-utilities');
+				return normalizeLlmResultUsage({ generations: [], llmOutput: { usage } });
+			};
+
+			it('should not override the default parser', async () => {
 				await lmChatAnthropic.supplyData.call(cacheContext({}), 0);
 
-				const { tokensUsageParser } = MockedN8nLlmTracing.mock.calls[0][1] as {
-					tokensUsageParser: (result: LLMResult) => Record<string, number>;
-				};
-				return tokensUsageParser({ generations: [], llmOutput: { usage } });
-			};
+				expect(MockedN8nLlmTracing.mock.calls[0][1]).not.toHaveProperty('tokensUsageParser');
+			});
 
 			it('should report input and output tokens when no cache tokens are returned', async () => {
 				await expect(parseUsage({ input_tokens: 100, output_tokens: 20 })).resolves.toEqual({
@@ -1270,7 +1270,7 @@ describe('LmChatAnthropic', () => {
 				});
 			});
 
-			it('should count cache writes and reads as prompt tokens', async () => {
+			it('should count cache writes and reads as prompt tokens and keep them as breakdowns', async () => {
 				await expect(
 					parseUsage({
 						input_tokens: 100,
@@ -1282,6 +1282,8 @@ describe('LmChatAnthropic', () => {
 					completionTokens: 20,
 					promptTokens: 1600,
 					totalTokens: 1620,
+					cacheReadTokens: 1000,
+					cacheWriteTokens: 500,
 				});
 			});
 
