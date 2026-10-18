@@ -687,11 +687,12 @@ function hookFunctionsSave(
 				executionId: this.executionId,
 				workflowId: this.workflowData.id,
 				executionData: fullExecutionData,
-				// A completed run must never overwrite a status the user already canceled. This applies
-				// to every save path that runs this hook; the case that motivated it is a subworkflow
-				// stopped in queue mode, where the worker keeps running the child to completion after
-				// the cancel and would otherwise write `success` over `canceled`.
-				conditions: { requireNotCanceled: true },
+				// A completed run must never overwrite a status the user already canceled — the
+				// case that motivated it is a subworkflow stopped in queue mode, where the worker
+				// keeps running the child to completion after the cancel. Only the *status* is
+				// protected: this write carries the run data, which is strictly more complete
+				// than anything already stored, and is the only account a cancelled run has.
+				conditions: { preserveCancellation: true },
 			});
 
 			await updateExistingExecutionMetadata(

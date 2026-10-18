@@ -663,23 +663,47 @@ export class ExecutionService {
 		return await this.stopDuringRun(execution);
 	}
 
+	/**
+	 * Marks an execution as cancelled, without overwriting what it produced.
+	 *
+	 * A running execution's run data is written only by the engine: it is the only party that
+	 * knows what actually ran, and the copy read here is as old as the last save. Writing it
+	 * back would overwrite the engine's own account of the run with a stale one — for a run
+	 * that never saved progress, with an empty one, losing even the trigger. So this write
+	 * moves only the status columns, the engine records the cancellation error on its final
+	 * save, and that save preserves a cancellation it finds already set.
+	 *
+	 * A waiting execution has no engine running it: the stored data is the whole account of
+	 * the run, so the cancellation error is recorded in it here.
+	 *
+	 * The write lands only while the execution still has the status it was read with. When it
+	 * does not, the stop starts over from the current state.
+	 */
 	private async stopDuringRun(execution: IExecutionResponse): Promise<IExecutionResponse> {
 		const expectedStatus = execution.status;
-		const error = new ManualExecutionCancelledError(execution.id);
 
-		execution.data = execution.data ?? createEmptyRunExecutionData();
-		execution.data.resultData.error = {
-			...error,
-			message: error.message,
-			stack: error.stack,
-		};
+		if (expectedStatus === 'waiting') {
+			const error = new ManualExecutionCancelledError(execution.id);
+			execution.data = execution.data ?? createEmptyRunExecutionData();
+			execution.data.resultData.error = {
+				...error,
+				message: error.message,
+				stack: error.stack,
+			};
+		}
 		execution.stoppedAt = new Date();
 		execution.waitTill = null;
 		execution.status = 'canceled';
 
 		const stopped = await this.executionPersistence.updateExistingExecution(
 			execution.id,
-			execution,
+			expectedStatus === 'waiting'
+				? execution
+				: {
+						stoppedAt: execution.stoppedAt,
+						waitTill: execution.waitTill,
+						status: execution.status,
+					},
 			{ requireStatus: expectedStatus },
 		);
 		if (!stopped) {
