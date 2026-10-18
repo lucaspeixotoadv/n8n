@@ -149,6 +149,60 @@ describe('WorkflowTool::WorkflowToolService', () => {
 			});
 		});
 
+		it('publishes the sub-workflow LLM usage on the tool run as sub-agent usage', async () => {
+			const subExecutionUsage = {
+				invocations: 3,
+				tokens: {
+					promptTokens: 1000,
+					completionTokens: 200,
+					totalTokens: 1200,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					reasoningTokens: 0,
+				},
+				tokensEstimated: false,
+				tokensComplete: true,
+				cost: { amount: 0.05, currency: 'USD' as const },
+				costComplete: true,
+			};
+			vi.spyOn(context, 'executeWorkflow').mockResolvedValueOnce({
+				data: [[{ json: { msg: 'done' } }]],
+				executionId: 'sub-execution',
+				llmUsage: subExecutionUsage,
+			});
+			vi.spyOn(context, 'addInputData').mockReturnValue({ index: 0 });
+			vi.spyOn(context, 'getNodeParameter').mockImplementation((parameter: string) =>
+				parameter === 'workflowId' ? { value: 'sub-workflow' } : 'database',
+			);
+			vi.spyOn(context, 'getWorkflowDataProxy').mockReturnValue({
+				$execution: { id: 'exec-id' },
+				$workflow: { id: 'workflow-id' },
+			} as unknown as IWorkflowDataProxyData);
+			vi.spyOn(context, 'cloneWith').mockReturnValue(context);
+
+			const tool = await service.createTool({
+				ctx: context,
+				name: 'TestTool',
+				description: 'Test Description',
+				itemIndex: 0,
+			});
+			await tool.func('test query');
+
+			expect(context.addOutputData).toHaveBeenCalledWith(
+				'ai_tool',
+				0,
+				expect.any(Array),
+				expect.objectContaining({
+					subExecution: expect.objectContaining({ executionId: 'sub-execution' }),
+					llmUsage: {
+						own: expect.objectContaining({ invocations: 0 }),
+						subagents: subExecutionUsage,
+						total: subExecutionUsage,
+					},
+				}),
+			);
+		});
+
 		it('should sanitize credential-shaped values in the tool-called event', async () => {
 			const TEST_RESPONSE = { api_key: 'sk-live-abcdef123456' };
 

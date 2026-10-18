@@ -1,6 +1,5 @@
 import { ChatAnthropic, type ChatAnthropicInput } from '@langchain/anthropic';
 import {
-	anthropicTokensUsageParser,
 	getProxyAgent,
 	aiClientFetch,
 	makeN8nLlmFailedAttemptHandler,
@@ -755,7 +754,8 @@ export class LmChatAnthropic implements INodeType {
 			maxTokens: options.maxTokensToSample,
 			callbacks: [
 				new N8nLlmTracing(this, {
-					tokensUsageParser: anthropicTokensUsageParser,
+					// The default parser reads the adapter's usage_metadata, which carries the cache
+					// read/write breakdown for streamed and non-streamed calls alike.
 					redactedHeaders: customHeader ? [customHeader.name] : [],
 				}),
 			],

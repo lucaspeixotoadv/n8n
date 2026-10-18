@@ -45,6 +45,7 @@ import type { Result } from '@n8n/utils/result';
 import type { Workflow } from './workflow';
 import type { EnvProviderState } from './workflow-data-proxy-env-provider';
 import type { IRunExecutionData } from './run-execution-data/run-execution-data';
+import type { LlmUsageAggregate, LlmUsageSummary } from './llm-usage';
 
 export type { WorkflowExecuteModeValues as WorkflowExecuteMode } from './execution-context';
 
@@ -2471,6 +2472,11 @@ export interface ExecuteWorkflowData extends DynamicCredentialsUsage {
 	waitTill?: Date | null;
 	/** Redaction channels the sub-execution reports to its caller, so the caller's execution redacts the copy of its output. Absent when no channel is redacted. */
 	subWorkflowRedaction?: RedactionChannels;
+	/**
+	 * LLM usage of the whole sub-execution, present when it had any. The caller publishes it
+	 * on its own run so the usage of a sub-workflow rolls up into the parent's aggregates.
+	 */
+	llmUsage?: LlmUsageSummary;
 }
 
 /**
@@ -3703,6 +3709,13 @@ export interface ITaskMetadata {
 	 * Key-value pairs that can be set for tracing - they will be attached to the OTEL node span
 	 * */
 	tracing?: Record<string, string | number | boolean>;
+
+	/**
+	 * LLM usage of this run, published by the engine once the run completes: the node's own
+	 * LLM invocations, everything its sub-agents used, and the total of both. Only present on
+	 * runs that have sub-nodes with LLM usage below them. See `aggregateLlmUsage`.
+	 */
+	llmUsage?: LlmUsageAggregate;
 }
 
 /** The data that gets returned when a node execution starts */

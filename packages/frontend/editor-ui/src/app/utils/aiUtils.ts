@@ -1,6 +1,12 @@
 import { CHAT_TRIGGER_NODE_TYPE, MANUAL_CHAT_TRIGGER_NODE_TYPE } from '@/app/constants';
-import type { INodeUi, LlmTokenUsageData } from '@/Interface';
-import type { IDataObject, INodeExecutionData, NodeConnectionType } from 'n8n-workflow';
+import type { INodeUi, LlmCostData, LlmTokenUsageData } from '@/Interface';
+import type {
+	IDataObject,
+	INodeExecutionData,
+	LlmInvocationUsage,
+	LlmUsageSummary,
+	NodeConnectionType,
+} from 'n8n-workflow';
 import { isObjectEmpty, NodeConnectionTypes } from 'n8n-workflow';
 
 interface MemoryMessage {
@@ -271,16 +277,89 @@ export const emptyTokenUsageData: LlmTokenUsageData = {
 	isEstimate: false,
 };
 
+function addOptionalCounts(one?: number, another?: number): number | undefined {
+	if (one === undefined && another === undefined) return undefined;
+	return (one ?? 0) + (another ?? 0);
+}
+
+/** Whether a usage leaves a cost sum complete: a priced one says so itself, an unpriced one only when it has no tokens. */
+function keepsCostComplete(usage: LlmTokenUsageData): boolean {
+	return usage.cost ? usage.cost.isComplete : usage.totalTokens === 0;
+}
+
+/** Sums two costs. A sum exists once at least one side was priced. */
+function addCostData(one: LlmTokenUsageData, another: LlmTokenUsageData): LlmCostData | undefined {
+	if (!one.cost && !another.cost) return undefined;
+	return {
+		amount: (one.cost?.amount ?? 0) + (another.cost?.amount ?? 0),
+		currency: 'USD',
+		isComplete: keepsCostComplete(one) && keepsCostComplete(another),
+	};
+}
+
 export function addTokenUsageData(
 	one: LlmTokenUsageData,
 	another: LlmTokenUsageData,
 ): LlmTokenUsageData {
+	const cacheReadTokens = addOptionalCounts(one.cacheReadTokens, another.cacheReadTokens);
+	const cacheWriteTokens = addOptionalCounts(one.cacheWriteTokens, another.cacheWriteTokens);
+	const reasoningTokens = addOptionalCounts(one.reasoningTokens, another.reasoningTokens);
+	const cost = addCostData(one, another);
 	return {
 		completionTokens: one.completionTokens + another.completionTokens,
 		promptTokens: one.promptTokens + another.promptTokens,
 		totalTokens: one.totalTokens + another.totalTokens,
 		isEstimate: one.isEstimate || another.isEstimate,
+		...(cacheReadTokens !== undefined && { cacheReadTokens }),
+		...(cacheWriteTokens !== undefined && { cacheWriteTokens }),
+		...(reasoningTokens !== undefined && { reasoningTokens }),
+		...(cost && { cost }),
 	};
+}
+
+/** Maps the usage summary the engine published on a run to the display shape. */
+export function toTokenUsageData(summary: LlmUsageSummary): LlmTokenUsageData {
+	const { tokens } = summary;
+	return {
+		completionTokens: tokens.completionTokens,
+		promptTokens: tokens.promptTokens,
+		totalTokens: tokens.totalTokens,
+		isEstimate: summary.tokensEstimated,
+		...(tokens.cacheReadTokens > 0 && { cacheReadTokens: tokens.cacheReadTokens }),
+		...(tokens.cacheWriteTokens > 0 && { cacheWriteTokens: tokens.cacheWriteTokens }),
+		...(tokens.reasoningTokens > 0 && { reasoningTokens: tokens.reasoningTokens }),
+		...(summary.invocations > 0 && {
+			cost: { amount: summary.cost.amount, currency: 'USD', isComplete: summary.costComplete },
+		}),
+	};
+}
+
+/** Maps the usage one LLM run item persisted to the display shape. */
+export function invocationToTokenUsageData(usage: LlmInvocationUsage): LlmTokenUsageData {
+	const { tokens } = usage;
+	return {
+		completionTokens: tokens.completionTokens,
+		promptTokens: tokens.promptTokens,
+		totalTokens: tokens.totalTokens,
+		isEstimate: usage.isEstimate,
+		...(tokens.cacheReadTokens !== undefined && { cacheReadTokens: tokens.cacheReadTokens }),
+		...(tokens.cacheWriteTokens !== undefined && { cacheWriteTokens: tokens.cacheWriteTokens }),
+		...(tokens.reasoningTokens !== undefined && { reasoningTokens: tokens.reasoningTokens }),
+		...(usage.cost && {
+			cost: { amount: usage.cost.amount, currency: 'USD', isComplete: true },
+		}),
+	};
+}
+
+const costFormatter = new Intl.NumberFormat('en-US', {
+	style: 'currency',
+	currency: 'USD',
+	minimumFractionDigits: 2,
+	maximumFractionDigits: 6,
+});
+
+export function formatTokenUsageCost(cost: LlmCostData): string {
+	return costFormatter.format(cost.amount);
 }
 
 export function formatTokenUsageCount(
