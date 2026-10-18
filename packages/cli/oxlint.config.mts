@@ -427,6 +427,8 @@ export default defineConfig({
 				'./src/modules/agents/integrations/platforms/discord-integration.ts',
 				'./src/modules/token-exchange/services/trusted-key.service.ts',
 				'./src/services/pruning/workflow-history-compaction.service.ts',
+				// One-shot pass on takeover: re-drives callback deliveries a lost process left claimed.
+				'./src/modules/wait-for-callback/callback-wait-delivery.service.ts',
 			],
 			rules: { 'n8n-local-rules/no-on-leader-takeover': 'off' },
 		},

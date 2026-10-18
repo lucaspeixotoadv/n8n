@@ -41,6 +41,7 @@ export const MODULE_NAMES = [
 	'type-availability-policies',
 	'instance-reporting',
 	'inbound-auth-core',
+	'wait-for-callback',
 ] as const;
 
 export type ModuleName = (typeof MODULE_NAMES)[number];

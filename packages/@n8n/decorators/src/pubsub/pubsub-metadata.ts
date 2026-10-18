@@ -32,6 +32,7 @@ export type PubSubEventName =
 	| 'relay-agent-background-tasks-update'
 	| 'relay-agent-update'
 	| 'resume-agent-workflow-tool'
+	| 'deliver-pending-callbacks'
 	| 'relay-chat-stream-event'
 	| 'relay-instance-ai-event'
 	| 'relay-instance-ai-task-control'
