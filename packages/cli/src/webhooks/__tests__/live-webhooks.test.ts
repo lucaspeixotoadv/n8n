@@ -28,7 +28,6 @@ import { mock } from 'vitest-mock-extended';
 import { WebhookNotFoundError } from '@/errors/response-errors/webhook-not-found.error';
 import type { NodeTypes } from '@/node-types';
 import { LiveWebhooks } from '@/webhooks/live-webhooks';
-import type { ToolCallbackWebhookRegistry } from '@/webhooks/tool-callback-webhook-registry';
 import * as WebhookHelpers from '@/webhooks/webhook-helpers';
 import type { WebhookService } from '@/webhooks/webhook.service';
 import type { WebhookRequest } from '@/webhooks/webhook.types';
@@ -55,7 +54,6 @@ describe('LiveWebhooks', () => {
 		allowWebhookIsolateSkip: true,
 	});
 	const workflowPublisherService = mock<WorkflowPublisherService>();
-	const toolCallbackWebhooks = mock<ToolCallbackWebhookRegistry>();
 
 	let liveWebhooks: LiveWebhooks;
 
@@ -73,7 +71,6 @@ describe('LiveWebhooks', () => {
 			workflowPublishedDataService,
 			expressionEngineConfig,
 			workflowPublisherService,
-			toolCallbackWebhooks,
 		);
 
 		// Mock WorkflowExecuteAdditionalData.getBase to avoid DI issues
@@ -581,51 +578,6 @@ describe('LiveWebhooks', () => {
 			expect(workflowRepository.findOne).toHaveBeenCalledWith(
 				expect.objectContaining({ relations: { activeVersion: true } }),
 			);
-		});
-
-		// A full-path webhook registers the node's id when its `path` parameter is empty, so
-		// the registered path and the parameter are different strings for the same node.
-		it('finds the node of an endpoint whose registered path is not its path parameter', async () => {
-			const registeredPath = 'b6f1a0de-0f5a-4f1e-9a1f-2c3d4e5f6a7b';
-			const fullPathNode: INode = {
-				id: 'full-path-node',
-				name: NODE_NAME,
-				type: 'n8n-nodes-base.webhook',
-				typeVersion: 1,
-				position: [0, 0],
-				webhookId: registeredPath,
-				parameters: {
-					path: '',
-					httpMethod,
-					options: { allowedOrigins: 'https://caller.example.com' },
-				},
-			};
-
-			const workflowEntity = {
-				id: WORKFLOW_ID,
-				activeVersionId: 'v1',
-				nodes: [fullPathNode],
-				activeVersion: {
-					versionId: 'v1',
-					workflowId: WORKFLOW_ID,
-					nodes: [fullPathNode],
-					connections: {},
-				},
-			} as unknown as WorkflowEntity;
-
-			const webhookEntity = mock<WebhookEntity>({
-				workflowId: WORKFLOW_ID,
-				node: NODE_NAME,
-				webhookPath: registeredPath,
-				method: httpMethod,
-				isDynamic: false,
-			});
-			webhookService.findWebhook.mockResolvedValue(webhookEntity);
-			workflowRepository.findOne.mockResolvedValue(workflowEntity);
-
-			const result = await liveWebhooks.findAccessControlOptions(registeredPath, httpMethod);
-
-			expect(result).toEqual({ allowedOrigins: 'https://caller.example.com' });
 		});
 
 		it('returns undefined when the workflow has no active version', async () => {

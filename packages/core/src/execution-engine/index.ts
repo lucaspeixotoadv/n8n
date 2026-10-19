@@ -1,6 +1,5 @@
 import type { SsrfBridge } from '@n8n/backend-network';
 import type {
-	CallbackWaitProvider,
 	DataTableProxyProvider,
 	DynamicCredentialCheckProxyProvider,
 	IExecutionContext,
@@ -50,8 +49,6 @@ declare module 'n8n-workflow' {
 		 */
 		evalLlmMockHandler?: EvalLlmMockHandler;
 		'data-table'?: { dataTableProxyProvider: DataTableProxyProvider };
-		/** Provided by the wait-for-callback module; absent when it is disabled. */
-		'wait-for-callback'?: { callbackWaitProvider: CallbackWaitProvider };
 		'dynamic-credentials'?: { credentialCheckProxy: DynamicCredentialCheckProxyProvider };
 		'oauth-jwe'?: { oauthJweProxyProvider: OauthJweProxyProvider };
 		// Project ID is currently only added on the additionalData if the user

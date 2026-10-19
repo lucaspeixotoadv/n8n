@@ -51,7 +51,6 @@ Auto-generated from the PostgreSQL migrations in @n8n/db. Do not edit by hand.
 | [public.auth_identity](public.auth_identity.md) | 5 |  | BASE TABLE |
 | [public.auth_provider_sync_history](public.auth_provider_sync_history.md) | 11 |  | BASE TABLE |
 | [public.binary_data](public.binary_data.md) | 9 |  | BASE TABLE |
-| [public.callback_wait](public.callback_wait.md) | 15 |  | BASE TABLE |
 | [public.chat_hub_agent_tools](public.chat_hub_agent_tools.md) | 2 |  | BASE TABLE |
 | [public.chat_hub_agents](public.chat_hub_agents.md) | 13 |  | BASE TABLE |
 | [public.chat_hub_messages](public.chat_hub_messages.md) | 17 |  | BASE TABLE |
@@ -883,23 +882,6 @@ erDiagram
   varchar_255_ sourceId
   varchar_50_ sourceType
   timestamp_3__with_time_zone updatedAt
-}
-"public.callback_wait" {
-  varchar_292_ activeKey
-  varchar_255_ correlationValue
-  timestamp_3__with_time_zone createdAt
-  varchar_36_ executionId
-  varchar_36_ id
-  varchar_36_ namespace
-  varchar_36_ nodeId
-  json payload
-  timestamp_3__with_time_zone payloadReceivedAt
-  timestamp_3__with_time_zone resolvedAt
-  varchar_32_ status
-  varchar_255_ toolCallId
-  timestamp_3__with_time_zone updatedAt
-  varchar_36_ userId
-  varchar_36_ workflowId
 }
 "public.chat_hub_agent_tools" {
   uuid agentId FK

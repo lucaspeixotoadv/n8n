@@ -360,11 +360,6 @@ export const ipWhitelistOption: INodeProperties = {
 
 /**
  * The response fields of a webhook that answers as soon as it receives the request.
- *
- * Declared apart from {@link optionsProperty} so a node that serves an endpoint without
- * running a workflow — the Wait for Callback tool — configures its response with the same
- * parameters, read by the same `getResponseData` / `WebhookResponseHeaders` code, instead
- * of growing a second set that drifts.
  */
 export const noResponseBodyOption: INodeProperties = {
 	displayName: 'No Response Body',

@@ -104,7 +104,6 @@ describe('eligibleModules', () => {
 			'workflow-reviews',
 			'instance-ai',
 			'agents',
-			'wait-for-callback',
 		]);
 	});
 
@@ -144,7 +143,6 @@ describe('eligibleModules', () => {
 			'workflow-reviews',
 			'instance-ai',
 			'agents',
-			'wait-for-callback',
 			'type-availability-policies',
 		]);
 	});

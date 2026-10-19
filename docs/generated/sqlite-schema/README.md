@@ -51,7 +51,6 @@ Auto-generated from the SQLite migrations in @n8n/db. Do not edit by hand.
 | [auth_identity](auth_identity.md) | 5 |  | table |
 | [auth_provider_sync_history](auth_provider_sync_history.md) | 11 |  | table |
 | [binary_data](binary_data.md) | 9 |  | table |
-| [callback_wait](callback_wait.md) | 15 |  | table |
 | [chat_hub_agent_tools](chat_hub_agent_tools.md) | 2 |  | table |
 | [chat_hub_agents](chat_hub_agents.md) | 13 |  | table |
 | [chat_hub_messages](chat_hub_messages.md) | 17 |  | table |
@@ -869,23 +868,6 @@ erDiagram
   varchar_255_ sourceId
   varchar_50_ sourceType
   datetime_3_ updatedAt
-}
-"callback_wait" {
-  varchar_292_ activeKey
-  varchar_255_ correlationValue
-  datetime_3_ createdAt
-  varchar_36_ executionId
-  varchar_36_ id PK
-  varchar_36_ namespace
-  varchar_36_ nodeId
-  TEXT payload
-  datetime_3_ payloadReceivedAt
-  datetime_3_ resolvedAt
-  varchar_32_ status
-  varchar_255_ toolCallId
-  datetime_3_ updatedAt
-  varchar_36_ userId
-  varchar_36_ workflowId
 }
 "chat_hub_agent_tools" {
   varchar agentId PK

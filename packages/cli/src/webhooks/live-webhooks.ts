@@ -5,6 +5,8 @@ import { Service } from '@n8n/di';
 import type { Response } from 'express';
 import {
 	Workflow,
+	CHAT_TRIGGER_NODE_TYPE,
+	CHAT_TRIGGER_PATH_SUFFIX,
 	WEBHOOK_NODE_TYPE,
 	nodeParametersAreStatic,
 	webhookDescriptionIsNativelyResolvable,
@@ -23,10 +25,8 @@ import { WorkflowStaticDataService } from '@/workflows/workflow-static-data.serv
 
 import { authAllowlistedNodes } from './constants';
 import { matchesExpectedNodeType } from './node-type-matcher';
-import { ToolCallbackWebhookRegistry } from './tool-callback-webhook-registry';
 import type { ExpectedWebhookNodeType } from './node-type-matcher';
 import { sanitizeWebhookRequest } from './webhook-request-sanitizer';
-import type { WebhookResponse } from './webhook-response';
 import type {
 	IWebhookResponseCallbackData,
 	IWebhookManager,
@@ -51,21 +51,12 @@ export class LiveWebhooks implements IWebhookManager {
 		private readonly workflowPublishedDataService: WorkflowPublishedDataService,
 		private readonly expressionEngineConfig: ExpressionEngineConfig,
 		private readonly workflowPublisherService: WorkflowPublisherService,
-		private readonly toolCallbackWebhooks: ToolCallbackWebhookRegistry,
 	) {}
 
 	async getWebhookMethods(path: string) {
 		return await this.webhookService.getWebhookMethods(path);
 	}
 
-	/**
-	 * The access control options of the node serving this endpoint.
-	 *
-	 * The node is taken from the registration that matched the request, which names it. The
-	 * registered path is not always the node's `path` parameter — a full-path webhook falls
-	 * back to the node's id when the parameter is empty, and a node may hold no such
-	 * parameter at all — so the parameter is not what identifies the node here.
-	 */
 	async findAccessControlOptions(path: string, httpMethod: IHttpRequestMethods) {
 		const webhook = await this.findWebhook(path, httpMethod);
 
@@ -74,8 +65,18 @@ export class LiveWebhooks implements IWebhookManager {
 			relations: { activeVersion: true },
 		});
 
-		const webhookNode = workflowData?.activeVersion?.nodes?.find(
-			({ name }) => name === webhook.node,
+		const isChatWebhookNode = (type: string, webhookId?: string) =>
+			type === CHAT_TRIGGER_NODE_TYPE && `${webhookId}/${CHAT_TRIGGER_PATH_SUFFIX}` === path;
+
+		const nodes = workflowData?.activeVersion?.nodes;
+		const webhookNode = nodes?.find(
+			({ type, parameters, typeVersion, webhookId }) =>
+				(parameters?.path === path &&
+					(parameters?.httpMethod ?? 'GET') === httpMethod &&
+					'webhook' in this.nodeTypes.getByNameAndVersion(type, typeVersion)) ||
+				// Chat Trigger has doesn't have configurable path and is always using POST, so
+				// we need to use webhookId for matching
+				isChatWebhookNode(type, webhookId),
 		);
 
 		return webhookNode?.parameters?.options as WebhookAccessControlOptions;
@@ -88,7 +89,7 @@ export class LiveWebhooks implements IWebhookManager {
 		request: WebhookRequest,
 		response: Response,
 		expectedNodeType?: ExpectedWebhookNodeType,
-	): Promise<IWebhookResponseCallbackData | WebhookResponse> {
+	): Promise<IWebhookResponseCallbackData> {
 		const httpMethod = request.method;
 		const path = request.params.path;
 
@@ -158,18 +159,9 @@ export class LiveWebhooks implements IWebhookManager {
 				.getNodeWebhooks(workflow, startNode as INode, additionalData)
 				.find((w) => w.httpMethod === httpMethod && w.path === webhook.webhookPath) as IWebhookData;
 
-			const declaredNodeType = webhookData?.webhookDescription.nodeType;
-
-			// A tool-callback endpoint resolves a tool call that is already suspended, so it
-			// never starts a workflow. It is served on the production webhook URL like any
-			// other node webhook, which is why it is routed here and dispatched by what the
-			// webhook declares rather than by node type.
-			const isToolCallback = declaredNodeType === 'toolCallback';
-
 			if (
-				!isToolCallback &&
 				expectedNodeType &&
-				!matchesExpectedNodeType(expectedNodeType, declaredNodeType)
+				!matchesExpectedNodeType(expectedNodeType, webhookData?.webhookDescription.nodeType)
 			) {
 				throw new WebhookNotFoundError(
 					{ path, httpMethod, webhookMethods: await this.getWebhookMethods(path) },
@@ -183,17 +175,6 @@ export class LiveWebhooks implements IWebhookManager {
 
 			if (workflowStartNode === null) {
 				throw new NotFoundError('Could not find node to process webhook.');
-			}
-
-			if (isToolCallback) {
-				return await this.toolCallbackWebhooks.handle({
-					workflow,
-					node: workflowStartNode,
-					webhookData,
-					additionalData,
-					req: request,
-					res: response,
-				});
 			}
 
 			if (!authAllowlistedNodes.has(workflowStartNode.type)) {
