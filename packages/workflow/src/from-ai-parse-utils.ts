@@ -19,6 +19,53 @@ export type FromAIArgument = {
 
 class ParseError extends Error {}
 
+interface JsonSchemaDef extends z.ZodTypeDef {
+	jsonSchema?: {
+		anyOf: [
+			{
+				type: 'object';
+				minProperties: number;
+				additionalProperties: boolean;
+			},
+			{
+				type: 'array';
+				minItems: number;
+			},
+		];
+	};
+}
+
+/**
+ * Generates the schema of a `json` argument, which accepts an object or an array.
+ * @param options.allowEmpty Whether an empty object or an empty array is valid.
+ * @returns A Zod schema with the matching JSON Schema metadata attached.
+ */
+function generateJsonSchema({ allowEmpty }: { allowEmpty: boolean }): z.ZodTypeAny {
+	const minSize = allowEmpty ? 0 : 1;
+
+	const schema = z.custom<Record<string, unknown> | unknown[]>(
+		(data: unknown) => {
+			if (data === null || typeof data !== 'object') return false;
+			const size = Array.isArray(data) ? data.length : Object.keys(data).length;
+			return size >= minSize;
+		},
+		{
+			message: allowEmpty
+				? 'Value must be an object or an array'
+				: 'Value must be a non-empty object or a non-empty array',
+		},
+	) as z.ZodType<Record<string, unknown> | unknown[], JsonSchemaDef>;
+
+	schema._def.jsonSchema = {
+		anyOf: [
+			{ type: 'object', minProperties: minSize, additionalProperties: true },
+			{ type: 'array', minItems: minSize },
+		],
+	};
+
+	return schema;
+}
+
 /**
  * Generates a Zod schema based on the provided FromAIArgument placeholder.
  * @param placeholder The FromAIArgument object containing key, type, description, and defaultValue.
@@ -37,61 +84,10 @@ export function generateZodSchema(placeholder: FromAIArgument): z.ZodTypeAny {
 		case 'boolean':
 			schema = z.boolean();
 			break;
-		case 'json': {
-			interface CustomSchemaDef extends z.ZodTypeDef {
-				jsonSchema?: {
-					anyOf: [
-						{
-							type: 'object';
-							minProperties: number;
-							additionalProperties: boolean;
-						},
-						{
-							type: 'array';
-							minItems: number;
-						},
-					];
-				};
-			}
-
-			// Create a custom schema to validate that the incoming data is either a non-empty object or a non-empty array.
-			const customSchema = z.custom<Record<string, unknown> | unknown[]>(
-				(data: unknown) => {
-					if (data === null || typeof data !== 'object') return false;
-					if (Array.isArray(data)) {
-						return data.length > 0;
-					}
-					return Object.keys(data).length > 0;
-				},
-				{
-					message: 'Value must be a non-empty object or a non-empty array',
-				},
-			);
-
-			// Cast the custom schema to a type that includes our JSON metadata.
-			const typedSchema = customSchema as z.ZodType<
-				Record<string, unknown> | unknown[],
-				CustomSchemaDef
-			>;
-
-			// Attach the updated `jsonSchema` metadata to the internal definition.
-			typedSchema._def.jsonSchema = {
-				anyOf: [
-					{
-						type: 'object',
-						minProperties: 1,
-						additionalProperties: true,
-					},
-					{
-						type: 'array',
-						minItems: 1,
-					},
-				],
-			};
-
-			schema = typedSchema;
+		case 'json':
+			// An argument with a declared default is optional, so an empty value is valid for it.
+			schema = generateJsonSchema({ allowEmpty: placeholder.defaultValue !== undefined });
 			break;
-		}
 		default:
 			schema = z.string();
 	}
