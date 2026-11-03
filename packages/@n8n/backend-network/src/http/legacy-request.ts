@@ -13,6 +13,7 @@ import { IncomingMessage } from 'node:http';
 import { Readable } from 'node:stream';
 
 import type { SsrfBridge } from '../ssrf';
+import { removeEmptyBody } from './axios/empty-body';
 import { invokeAxios } from './axios/invoke';
 import { buildAxiosConfigFromLegacyRequest, buildLegacyAgentOptions } from './axios/legacy';
 import { followSsrfRedirects, shouldFollowRedirectsManually } from './axios/redirect';
@@ -36,8 +37,8 @@ export interface LegacyRequestCallbacks {
 }
 
 /**
- * Runs the deprecated `request`-style HTTP path (`IRequestOptions`): axios
- * translation, SSRF pre-flight, domain allowlist enforcement, response
+ * Runs the deprecated `request`-style HTTP path (`IRequestOptions`): empty-body
+ * removal, axios translation, SSRF pre-flight, domain allowlist enforcement, response
  * normalisation and axios error massaging.
  *
  * Exposed to callers as {@link HttpRequestClient.requestLegacy}; kept in its own
@@ -76,6 +77,8 @@ async function sendLegacyRequest(
 		// `instanceof IncomingMessage` checks in parseIncomingMessage / prepareBinaryData.
 		maxContentLength: -1,
 	};
+
+	removeEmptyBody(requestObject);
 
 	const url = resolveLegacyRequestUrl(requestObject);
 	await validateUrlSsrf(url, ssrfBridge);

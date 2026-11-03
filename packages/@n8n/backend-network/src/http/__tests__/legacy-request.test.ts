@@ -101,6 +101,56 @@ describe('OutboundHttp.requests requestLegacy', () => {
 		});
 	});
 
+	describe('empty body', () => {
+		const baseUrl = 'https://example.test';
+
+		// The HTTP Request node sends a raw body as a string, with the content type the user chose.
+		it.each(['GET', 'DELETE'] as const)(
+			'sends a %s request with an empty raw body without content',
+			async (method) => {
+				let received: { body: unknown; contentLength: unknown } | undefined;
+				nock(baseUrl)
+					.intercept('/resource', method)
+					.reply(function (_uri, body) {
+						received = { body, contentLength: this.req.headers['content-length'] };
+						return [200, 'ok'];
+					});
+				const client = makeFacade().requests({ useDefaultSsrfPolicy: 'unsafe' });
+
+				await client.requestLegacy({
+					url: `${baseUrl}/resource`,
+					method,
+					body: '',
+					json: false,
+					headers: { 'content-type': 'application/json' },
+				});
+
+				expect(received).toEqual({ body: '', contentLength: undefined });
+			},
+		);
+
+		it('keeps a non-empty raw body on a DELETE request', async () => {
+			let received: unknown;
+			nock(baseUrl)
+				.delete('/resource')
+				.reply(function (_uri, body) {
+					received = body;
+					return [200, 'ok'];
+				});
+			const client = makeFacade().requests({ useDefaultSsrfPolicy: 'unsafe' });
+
+			await client.requestLegacy({
+				url: `${baseUrl}/resource`,
+				method: 'DELETE',
+				body: '{"id":"1234567890123456"}',
+				json: false,
+				headers: { 'content-type': 'application/json' },
+			});
+
+			expect(received).toEqual({ id: '1234567890123456' });
+		});
+	});
+
 	describe('redirects', () => {
 		const baseUrl = 'https://example.test';
 		const otherOrigin = 'https://otherdomain.test';

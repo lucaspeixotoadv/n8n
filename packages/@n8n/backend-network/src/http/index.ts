@@ -6,7 +6,7 @@ export {
 export { installGlobalProxyAgent } from './http-proxy';
 export { configureGlobalAxiosDefaults } from './axios/config';
 export { buildTargetUrl, isFormDataInstance, tryParseUrl } from './axios/utils';
-export { removeEmptyBody } from './axios/request';
+export { removeEmptyBody } from './axios/empty-body';
 export { parseIncomingMessage } from './parse-incoming-message';
 export { binaryToBuffer, streamToBuffer } from './binary-buffer';
 export { binaryToString } from './binary-string';

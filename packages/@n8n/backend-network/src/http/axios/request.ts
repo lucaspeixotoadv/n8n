@@ -1,13 +1,9 @@
 import type { AxiosRequestConfig } from 'axios';
-import type {
-	IHttpRequestOptions,
-	IN8nHttpFullResponse,
-	IN8nHttpResponse,
-	IRequestOptions,
-} from 'n8n-workflow';
+import type { IHttpRequestOptions, IN8nHttpFullResponse, IN8nHttpResponse } from 'n8n-workflow';
 import { isObjectEmpty } from 'n8n-workflow';
 import { stringify } from 'qs';
 
+import { removeEmptyBody } from './empty-body';
 import { invokeAxios } from './invoke';
 import { followSsrfRedirects, shouldFollowRedirectsManually } from './redirect';
 import { applyDefaultOutboundUserAgent } from './user-agent';
@@ -143,33 +139,6 @@ export function convertN8nRequestToAxios(
 	}
 
 	return axiosRequest;
-}
-
-const NoBodyHttpMethods = ['GET', 'HEAD', 'OPTIONS'];
-
-/**
- * Checks whether a request body should be considered empty.
- */
-function isEmpty(value: unknown): boolean {
-	if (value === null || value === undefined) {
-		return true;
-	}
-	if (typeof value === 'string' || Array.isArray(value) || Buffer.isBuffer(value)) {
-		return value.length === 0;
-	}
-	if (typeof value === 'object') {
-		return Object.keys(value).length === 0;
-	}
-	return false;
-}
-
-/** Remove empty request body on GET, HEAD, and OPTIONS requests */
-// oxlint-disable-next-line typescript/no-deprecated
-export function removeEmptyBody(requestOptions: IHttpRequestOptions | IRequestOptions) {
-	const method = requestOptions.method ?? 'GET';
-	if (NoBodyHttpMethods.includes(method) && isEmpty(requestOptions.body)) {
-		delete requestOptions.body;
-	}
 }
 
 /**

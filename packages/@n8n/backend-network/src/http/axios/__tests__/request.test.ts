@@ -9,7 +9,8 @@ import { mock } from 'vitest-mock-extended';
 
 import type { SsrfBridge } from '../../../ssrf';
 import { configureGlobalAxiosDefaults } from '../config';
-import { convertN8nRequestToAxios, httpRequest, removeEmptyBody } from '../request';
+import { removeEmptyBody } from '../empty-body';
+import { convertN8nRequestToAxios, httpRequest } from '../request';
 import { HttpResponseSizeLimitError } from '../../response-size-limit.error';
 import { retryabilityFromError } from '../../retryability';
 
@@ -19,7 +20,7 @@ configureGlobalAxiosDefaults();
 const TEST_CA_CERT = '-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----';
 
 describe('removeEmptyBody', () => {
-	test.each(['GET', 'HEAD', 'OPTIONS'] as IHttpRequestMethods[])(
+	test.each(['GET', 'HEAD', 'OPTIONS', 'DELETE'] as IHttpRequestMethods[])(
 		'Should remove empty body for %s',
 		(method) => {
 			const requestOptions = {
@@ -31,7 +32,7 @@ describe('removeEmptyBody', () => {
 		},
 	);
 
-	test.each(['GET', 'HEAD', 'OPTIONS'] as IHttpRequestMethods[])(
+	test.each(['GET', 'HEAD', 'OPTIONS', 'DELETE'] as IHttpRequestMethods[])(
 		'Should not remove non-empty body for %s',
 		(method) => {
 			const requestOptions = {
@@ -43,7 +44,7 @@ describe('removeEmptyBody', () => {
 		},
 	);
 
-	test.each(['POST', 'PUT', 'PATCH', 'DELETE'] as IHttpRequestMethods[])(
+	test.each(['POST', 'PUT', 'PATCH'] as IHttpRequestMethods[])(
 		'Should not remove empty body for %s',
 		(method) => {
 			const requestOptions = {
@@ -54,6 +55,12 @@ describe('removeEmptyBody', () => {
 			expect(requestOptions.body).toEqual({});
 		},
 	);
+
+	it('should match the method case-insensitively', () => {
+		const requestOptions = { method: 'delete', body: '' } as unknown as IRequestOptions;
+		removeEmptyBody(requestOptions);
+		expect(requestOptions.body).toBeUndefined();
+	});
 
 	describe('empty-body detection across body shapes (GET)', () => {
 		test.each([
