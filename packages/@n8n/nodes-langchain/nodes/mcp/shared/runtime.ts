@@ -42,6 +42,7 @@ import {
 	createCallTool,
 	getErrorDescriptionFromToolCall,
 	getSelectedTools,
+	getToolCallResult,
 	mcpToolToDynamicTool,
 } from '../McpClientTool/utils';
 
@@ -242,11 +243,22 @@ async function runToolCall(opts: {
 	client: Client;
 	timeout: number;
 	fixedArguments: McpFixedArgument[];
+	structuredResponse: boolean;
 	itemIndex: number;
 	returnData: INodeExecutionData[];
 }): Promise<void> {
-	const { ctx, node, item, mcpTools, client, timeout, fixedArguments, itemIndex, returnData } =
-		opts;
+	const {
+		ctx,
+		node,
+		item,
+		mcpTools,
+		client,
+		timeout,
+		fixedArguments,
+		structuredResponse,
+		itemIndex,
+		returnData,
+	} = opts;
 
 	if (!item.json.tool || typeof item.json.tool !== 'string') {
 		throw new NodeOperationError(node, 'Tool name not found in item.json.tool or item.tool', {
@@ -285,12 +297,14 @@ async function runToolCall(opts: {
 		}
 
 		returnData.push({
-			json: {
-				response: result.content as IDataObject,
-				...(isStructuredContent(result.structuredContent) && {
-					structuredContent: result.structuredContent,
-				}),
-			},
+			json: structuredResponse
+				? { response: getToolCallResult(result) as IDataObject }
+				: {
+						response: result.content as IDataObject,
+						...(isStructuredContent(result.structuredContent) && {
+							structuredContent: result.structuredContent,
+						}),
+					},
 			pairedItem: { item: itemIndex },
 		});
 	}
@@ -311,7 +325,15 @@ async function runToolCall(opts: {
 export async function executeMcpTool(
 	ctx: IExecuteFunctions,
 	resolveConfig: (itemIndex: number) => ResolvedMcpConfig | Promise<ResolvedMcpConfig>,
-	options: { enableSessionCache?: boolean } = {},
+	options: {
+		enableSessionCache?: boolean;
+		/**
+		 * Put in `response` only the result the agent toolkit gives the agent
+		 * (`structuredContent` over `content`), instead of `content` next to
+		 * `structuredContent`, so the agent does not get the data twice.
+		 */
+		structuredResponse?: boolean;
+	} = {},
 ): Promise<INodeExecutionData[][]> {
 	const node = ctx.getNode();
 	const items = ctx.getInputData();
@@ -359,6 +381,7 @@ export async function executeMcpTool(
 				client,
 				timeout: config.timeout,
 				fixedArguments: config.fixedArguments,
+				structuredResponse: options.structuredResponse ?? false,
 				itemIndex,
 				returnData,
 			});
@@ -385,6 +408,7 @@ export async function executeMcpTool(
 				client,
 				timeout: config.timeout,
 				fixedArguments: config.fixedArguments,
+				structuredResponse: options.structuredResponse ?? false,
 				itemIndex,
 				returnData,
 			});

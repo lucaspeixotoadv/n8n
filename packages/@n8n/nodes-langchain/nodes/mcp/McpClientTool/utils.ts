@@ -55,6 +55,28 @@ export const getErrorDescriptionFromToolCall = (result: unknown): string | undef
 	return undefined;
 };
 
+/**
+ * Returns the result of a tool call as the agent gets it: the legacy `toolResult`,
+ * else the `structuredContent`, else the `content` blocks. A server that sends
+ * `structuredContent` also sends it as text in `content`, so the agent gets the
+ * data once.
+ */
+export function getToolCallResult(result: Awaited<ReturnType<Client['callTool']>>): unknown {
+	if (result.toolResult !== undefined) {
+		return result.toolResult;
+	}
+
+	if (isStructuredContent(result.structuredContent)) {
+		return result.structuredContent;
+	}
+
+	if (result.content !== undefined) {
+		return result.content;
+	}
+
+	return result;
+}
+
 export const createCallTool =
 	(
 		name: string,
@@ -95,19 +117,7 @@ export const createCallTool =
 			return handleError(result);
 		}
 
-		if (result.toolResult !== undefined) {
-			return result.toolResult;
-		}
-
-		if (isStructuredContent(result.structuredContent)) {
-			return result.structuredContent;
-		}
-
-		if (result.content !== undefined) {
-			return result.content;
-		}
-
-		return result;
+		return getToolCallResult(result);
 	};
 
 const MAX_MCP_TOOL_NAME_LENGTH = 64;

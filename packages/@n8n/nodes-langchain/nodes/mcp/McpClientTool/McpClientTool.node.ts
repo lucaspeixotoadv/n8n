@@ -64,8 +64,8 @@ export class McpClientTool implements INodeType {
 			dark: 'file:../mcp.dark.svg',
 		},
 		group: ['output'],
-		version: [1, 1.1, 1.2, 1.3, 1.4],
-		defaultVersion: 1.4,
+		version: [1, 1.1, 1.2, 1.3, 1.4, 1.5],
+		defaultVersion: 1.5,
 		description: 'Connect tools from an MCP Server',
 		defaults: {
 			name: 'MCP Client',
@@ -358,8 +358,12 @@ export class McpClientTool implements INodeType {
 		return await executeMcpTool(
 			this,
 			(itemIndex) => resolveConfigFromNodeParameters(this, itemIndex),
-			// v1.4+ reuses one MCP session across tool calls within an execution.
-			{ enableSessionCache: this.getNode().typeVersion >= 1.4 },
+			{
+				// v1.4+ reuses one MCP session across tool calls within an execution.
+				enableSessionCache: this.getNode().typeVersion >= 1.4,
+				// v1.5+ gives the agent the structured result once, not next to its text copy.
+				structuredResponse: this.getNode().typeVersion >= 1.5,
+			},
 		);
 	}
 }

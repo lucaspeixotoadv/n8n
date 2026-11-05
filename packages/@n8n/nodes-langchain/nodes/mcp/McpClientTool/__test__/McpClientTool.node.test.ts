@@ -989,6 +989,44 @@ describe('McpClientTool', () => {
 	});
 
 	describe('execute', () => {
+		it.each([
+			[1.4, { response: [{ type: 'text', text: '{"id":"1"}' }], structuredContent: { id: '1' } }],
+			[1.5, { response: { id: '1' } }],
+		])('should shape the tool output for version %s', async (typeVersion, expected) => {
+			vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+			vi.spyOn(Client.prototype, 'callTool').mockResolvedValue({
+				content: [{ type: 'text', text: '{"id":"1"}' }],
+				structuredContent: { id: '1' },
+			});
+			vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({
+				tools: [{ name: 'get_record', inputSchema: { type: 'object', properties: {} } }],
+			});
+
+			const mockNode = mock<INode>({ typeVersion, type: 'mcpClientTool', name: 'MCP Client' });
+			const result = await new McpClientTool().execute.call(
+				mock<any>({
+					...egressHelpers<IExecuteFunctions>(),
+					getNode: vi.fn(() => mockNode),
+					getExecutionId: vi.fn(() => undefined),
+					getInputData: vi.fn(() => [
+						{ json: { tool: buildMcpToolName('MCP Client', 'get_record') } },
+					]),
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
+						const params: Record<string, any> = {
+							include: 'all',
+							authentication: 'none',
+							serverTransport: 'httpStreamable',
+							endpointUrl: 'https://test.com/mcp',
+							'options.timeout': 60000,
+						};
+						return params[key] ?? fallback;
+					}),
+				}),
+			);
+
+			expect(result[0][0].json).toEqual(expected);
+		});
+
 		it('should execute tool when tool name is in item.json.tool (from agent)', async () => {
 			vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
 			vi.spyOn(Client.prototype, 'callTool').mockResolvedValue({

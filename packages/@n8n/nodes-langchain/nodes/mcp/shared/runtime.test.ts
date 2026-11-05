@@ -557,6 +557,37 @@ describe('runtime', () => {
 			});
 		});
 
+		describe('with structuredResponse', () => {
+			it('puts only the structuredContent in the response', async () => {
+				vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+				vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [sampleTool] });
+				vi.spyOn(Client.prototype, 'callTool').mockResolvedValue({
+					content: [{ type: 'text', text: '{"result":[{"id":"abc"}]}' }],
+					structuredContent: { result: [{ id: 'abc' }] },
+				});
+				vi.spyOn(Client.prototype, 'close').mockResolvedValue();
+				const ctx = createExecuteCtx([{ json: { tool: buildMcpToolName('MCP', 'search') } }]);
+
+				const result = await executeMcpTool(ctx, () => baseConfig, { structuredResponse: true });
+
+				expect(result[0][0].json).toEqual({ response: { result: [{ id: 'abc' }] } });
+			});
+
+			it('puts the content in the response when there is no structuredContent', async () => {
+				vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+				vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [sampleTool] });
+				vi.spyOn(Client.prototype, 'callTool').mockResolvedValue({
+					content: [{ type: 'text', text: 'ok' }],
+				});
+				vi.spyOn(Client.prototype, 'close').mockResolvedValue();
+				const ctx = createExecuteCtx([{ json: { tool: buildMcpToolName('MCP', 'search') } }]);
+
+				const result = await executeMcpTool(ctx, () => baseConfig, { structuredResponse: true });
+
+				expect(result[0][0].json).toEqual({ response: [{ type: 'text', text: 'ok' }] });
+			});
+		});
+
 		it('closes the client even when the call throws', async () => {
 			vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
 			vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [sampleTool] });
