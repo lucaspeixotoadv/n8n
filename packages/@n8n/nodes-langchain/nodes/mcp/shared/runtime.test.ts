@@ -340,7 +340,7 @@ describe('runtime', () => {
 				ok: true,
 				result: client,
 			});
-			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool, sampleTool]);
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool, sampleTool] as McpTool[]);
 
 			await expect(
 				buildMcpToolkit(createSupplyDataCtx(), 0, {
@@ -770,7 +770,7 @@ describe('runtime', () => {
 				ok: true,
 				result: mock<Client>(),
 			});
-			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool, sampleTool]);
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool, sampleTool] as McpTool[]);
 			const ctx = mock<ILoadOptionsFunctions>({
 				getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP' })),
 				...egressHelpers<ILoadOptionsFunctions>(),
