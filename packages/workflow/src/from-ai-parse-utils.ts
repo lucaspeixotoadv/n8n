@@ -19,51 +19,24 @@ export type FromAIArgument = {
 
 class ParseError extends Error {}
 
-interface JsonSchemaDef extends z.ZodTypeDef {
-	jsonSchema?: {
-		anyOf: [
-			{
-				type: 'object';
-				minProperties: number;
-				additionalProperties: boolean;
-			},
-			{
-				type: 'array';
-				minItems: number;
-			},
-		];
-	};
-}
-
 /**
  * Generates the schema of a `json` argument, which accepts an object or an array.
+ * The schema is built from Zod types, so converting it to JSON Schema keeps both types.
  * @param options.allowEmpty Whether an empty object or an empty array is valid.
- * @returns A Zod schema with the matching JSON Schema metadata attached.
+ * @returns A Zod schema for the argument.
  */
 function generateJsonSchema({ allowEmpty }: { allowEmpty: boolean }): z.ZodTypeAny {
-	const minSize = allowEmpty ? 0 : 1;
+	const message = allowEmpty
+		? 'Value must be an object or an array'
+		: 'Value must be a non-empty object or a non-empty array';
 
-	const schema = z.custom<Record<string, unknown> | unknown[]>(
-		(data: unknown) => {
-			if (data === null || typeof data !== 'object') return false;
-			const size = Array.isArray(data) ? data.length : Object.keys(data).length;
-			return size >= minSize;
-		},
-		{
-			message: allowEmpty
-				? 'Value must be an object or an array'
-				: 'Value must be a non-empty object or a non-empty array',
-		},
-	) as z.ZodType<Record<string, unknown> | unknown[], JsonSchemaDef>;
+	const schema = z.union([z.record(z.unknown()), z.array(z.unknown())], {
+		errorMap: () => ({ message }),
+	});
+	if (allowEmpty) return schema;
 
-	schema._def.jsonSchema = {
-		anyOf: [
-			{ type: 'object', minProperties: minSize, additionalProperties: true },
-			{ type: 'array', minItems: minSize },
-		],
-	};
-
-	return schema;
+	// The keys of an array are its indexes, so this counts the items of an array too.
+	return schema.refine((value) => Object.keys(value).length > 0, { message });
 }
 
 /**

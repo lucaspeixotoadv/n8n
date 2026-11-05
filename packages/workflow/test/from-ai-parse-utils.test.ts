@@ -127,6 +127,16 @@ describe('JSON Type Parsing via generateZodSchema', () => {
 		);
 	});
 
+	it('should accept a non-empty array and reject a value that is not an object or an array', () => {
+		const [arg] = extractFromAICalls('$fromAI("jsonParam", "JSON parameter", "json")');
+		const schema = generateZodSchema(arg);
+
+		expect(schema.parse(['1234567890123456'])).toEqual(['1234567890123456']);
+		expect(() => schema.parse('[]')).toThrowError(
+			/Value must be a non-empty object or a non-empty array/,
+		);
+	});
+
 	it('should correctly parse a JSON parameter with a valid default', () => {
 		const [arg] = extractFromAICalls(
 			'$fromAI("jsonWithValidDefault", "JSON parameter with valid default", "json", "{"key": "defaultValue"}")',
@@ -185,24 +195,6 @@ describe('JSON Type Parsing via generateZodSchema', () => {
 
 		expect(() => schema.parse('')).toThrowError(/Value must be an object or an array/);
 		expect(() => schema.parse(null)).toThrowError(/Value must be an object or an array/);
-	});
-
-	it('should describe the minimum size in the JSON Schema metadata', () => {
-		const [withDefault] = extractFromAICalls('$fromAI("a", "b", "json", [])');
-		const [withoutDefault] = extractFromAICalls('$fromAI("a", "b", "json")');
-
-		expect(generateZodSchema(withDefault)._def.innerType._def.jsonSchema).toEqual({
-			anyOf: [
-				{ type: 'object', minProperties: 0, additionalProperties: true },
-				{ type: 'array', minItems: 0 },
-			],
-		});
-		expect(generateZodSchema(withoutDefault)._def.jsonSchema).toEqual({
-			anyOf: [
-				{ type: 'object', minProperties: 1, additionalProperties: true },
-				{ type: 'array', minItems: 1 },
-			],
-		});
 	});
 
 	it('should use provided JSON value over the default value', () => {

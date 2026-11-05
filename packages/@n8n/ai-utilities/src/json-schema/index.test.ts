@@ -1,3 +1,4 @@
+import { extractFromAICalls, generateZodSchema } from 'n8n-workflow';
 import { z } from 'zod';
 import * as z4 from 'zod/v4';
 
@@ -19,6 +20,25 @@ function keywordsIn(node: unknown, found = new Set<string>()): Set<string> {
 }
 
 describe('zodToDraft202012', () => {
+	it('keeps the object and array types of a $fromAI json argument', () => {
+		const [withoutDefault, withDefault] = extractFromAICalls(
+			'$fromAI("dados", "Dados", "json") $fromAI("etiquetas", "IDs", "json", [])',
+		);
+		const result = zodToDraft202012(
+			z.object({
+				dados: generateZodSchema(withoutDefault),
+				etiquetas: generateZodSchema(withDefault),
+			}),
+		);
+		const types = { anyOf: [{ type: 'object' }, { type: 'array' }] };
+
+		expect(result.properties).toMatchObject({
+			dados: { description: 'Dados', ...types },
+			etiquetas: { description: 'IDs', default: [], ...types },
+		});
+		expect(result.required).toEqual(['dados']);
+	});
+
 	it('declares 2020-12 rather than draft-07', () => {
 		const result = zodToDraft202012(z.object({ a: z.string() }));
 

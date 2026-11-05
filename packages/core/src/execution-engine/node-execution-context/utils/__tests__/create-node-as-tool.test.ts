@@ -482,7 +482,7 @@ describe('createNodeAsTool', () => {
 
 			const tool = createNodeAsTool(options).response;
 
-			expect(tool.schema.shape.complexJson._def.innerType).toBeInstanceOf(z.ZodEffects);
+			expect(tool.schema.shape.complexJson._def.innerType).toBeInstanceOf(z.ZodUnion);
 			expect(tool.schema.shape.complexJson.description).toBe('Param with complex JSON default');
 			expect(tool.schema.shape.complexJson._def.defaultValue()).toEqual({
 				nested: { key: 'value' },
