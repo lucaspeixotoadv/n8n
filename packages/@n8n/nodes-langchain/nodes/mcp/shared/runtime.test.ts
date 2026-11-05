@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Container } from '@n8n/di';
 import { createResultOk } from '@n8n/utils/result';
 import { mock } from 'vitest-mock-extended';
+import type { z } from 'zod';
 import { StructuredToolkit } from 'n8n-core';
 import {
 	NodeConnectionTypes,
@@ -14,7 +15,12 @@ import {
 } from 'n8n-workflow';
 
 import { McpClientsManager } from './McpClientsManager';
-import { buildMcpToolkit, executeMcpTool, loadMcpToolOptions } from './runtime';
+import {
+	buildMcpToolkit,
+	executeMcpTool,
+	loadMcpToolArgumentOptions,
+	loadMcpToolOptions,
+} from './runtime';
 import type { ResolvedMcpConfig, McpConnectionConfig } from './runtime';
 import type { McpTool } from './types';
 import * as utils from './utils';
@@ -37,6 +43,7 @@ const baseConfig: ResolvedMcpConfig = {
 	endpointUrl: 'https://mcp.example.com/mcp',
 	timeout: 60000,
 	toolFilter: { mode: 'all', includeTools: [], excludeTools: [] },
+	fixedArguments: [],
 };
 
 const baseConnectionConfig: McpConnectionConfig = {
@@ -44,6 +51,28 @@ const baseConnectionConfig: McpConnectionConfig = {
 	transport: 'httpStreamable',
 	endpointUrl: 'https://mcp.example.com/mcp',
 	timeout: 60000,
+};
+
+const recordTool: McpTool = {
+	name: 'createRecord',
+	description: 'Creates a record',
+	inputSchema: {
+		type: 'object',
+		properties: {
+			caseId: { type: 'string', description: 'Case ID' },
+			title: { type: 'string', description: 'Title' },
+		},
+		required: ['caseId', 'title'],
+	},
+};
+
+const fixedCaseIdConfig: ResolvedMcpConfig = {
+	authentication: 'none',
+	transport: 'httpStreamable',
+	endpointUrl: 'https://mcp.example.com/mcp',
+	timeout: 60000,
+	toolFilter: { mode: 'all', includeTools: [], excludeTools: [] },
+	fixedArguments: [{ tool: 'createRecord', argument: 'caseId', value: '1234567890123456' }],
 };
 
 const createTestEgressFilter = (): NodeEgressFilter => ({
@@ -266,6 +295,45 @@ describe('runtime', () => {
 			expect(tools[0].name).toBe(buildMcpToolName('MCP', 'search'));
 		});
 
+		it('hides a fixed argument from the agent and sends its value in the call', async () => {
+			const client = mock<Client>({
+				callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'created' }] }),
+			});
+			vi.spyOn(utils, 'connectMcpClientForCredential').mockResolvedValue({
+				ok: true,
+				result: client,
+			});
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool]);
+
+			const result = await buildMcpToolkit(createSupplyDataCtx(), 0, fixedCaseIdConfig);
+			const [tool] = (result.response as StructuredToolkit).getTools();
+
+			expect(Object.keys((tool.schema as z.AnyZodObject).shape)).toEqual(['title']);
+			await tool.invoke({ title: 'Hearing' });
+			expect(client.callTool).toHaveBeenCalledWith(
+				{ name: 'createRecord', arguments: { title: 'Hearing', caseId: '1234567890123456' } },
+				expect.anything(),
+				expect.anything(),
+			);
+		});
+
+		it('throws and closes the client when a fixed argument is not published', async () => {
+			const client = mock<Client>();
+			vi.spyOn(utils, 'connectMcpClientForCredential').mockResolvedValue({
+				ok: true,
+				result: client,
+			});
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool]);
+
+			await expect(
+				buildMcpToolkit(createSupplyDataCtx(), 0, {
+					...fixedCaseIdConfig,
+					fixedArguments: [{ tool: 'createRecord', argument: 'responsible', value: '1' }],
+				}),
+			).rejects.toThrow('The tool "createRecord" has no argument "responsible" to fix');
+			expect(client.close).toHaveBeenCalled();
+		});
+
 		it('exposes the registry attribution as tool metadata and leaves the result alone', async () => {
 			const tools = await buildRegistryTools('Powered by Genie');
 
@@ -299,6 +367,34 @@ describe('runtime', () => {
 			const result = await runRegistryToolCall('Powered by Genie');
 
 			expect(result[0][0].json.response).toEqual([{ type: 'text', text: 'rows' }]);
+		});
+
+		it('sends the fixed arguments in the call, over a value from the agent', async () => {
+			const client = mock<Client>({
+				callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'created' }] }),
+			});
+			vi.spyOn(utils, 'connectMcpClientForCredential').mockResolvedValue({
+				ok: true,
+				result: client,
+			});
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool]);
+			const ctx = createExecuteCtx([
+				{
+					json: {
+						tool: buildMcpToolName('MCP', 'createRecord'),
+						title: 'Hearing',
+						caseId: 'from the agent',
+					},
+				},
+			]);
+
+			await executeMcpTool(ctx, () => fixedCaseIdConfig);
+
+			expect(client.callTool).toHaveBeenCalledWith(
+				{ name: 'createRecord', arguments: { title: 'Hearing', caseId: '1234567890123456' } },
+				expect.anything(),
+				expect.anything(),
+			);
 		});
 
 		it('throws when item.json.tool is missing', async () => {
@@ -673,6 +769,59 @@ describe('runtime', () => {
 
 			await expect(loadMcpToolOptions(ctx, baseConnectionConfig)).rejects.toThrow('list-failed');
 			expect(closeSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('loadMcpToolArgumentOptions', () => {
+		const createLoadOptionsCtx = () =>
+			mock<ILoadOptionsFunctions>({
+				getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP' })),
+				...egressHelpers<ILoadOptionsFunctions>(),
+			});
+
+		it('returns the arguments of the tool', async () => {
+			vi.spyOn(utils, 'connectMcpClientForCredential').mockResolvedValue({
+				ok: true,
+				result: mock<Client>(),
+			});
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool]);
+
+			const result = await loadMcpToolArgumentOptions(
+				createLoadOptionsCtx(),
+				baseConnectionConfig,
+				'createRecord',
+			);
+
+			// Each option is [name, value, description]: the argument name is both the label and the value.
+			expect(result.map(({ name, value, description }) => [name, value, description])).toEqual([
+				['caseId', 'caseId', 'Case ID'],
+				['title', 'title', 'Title'],
+			]);
+		});
+
+		it('returns no arguments without connecting when no tool is chosen', async () => {
+			const connect = vi.spyOn(utils, 'connectMcpClientForCredential');
+
+			const result = await loadMcpToolArgumentOptions(
+				createLoadOptionsCtx(),
+				baseConnectionConfig,
+				'',
+			);
+
+			expect(result).toEqual([]);
+			expect(connect).not.toHaveBeenCalled();
+		});
+
+		it('throws when the server does not publish the tool', async () => {
+			vi.spyOn(utils, 'connectMcpClientForCredential').mockResolvedValue({
+				ok: true,
+				result: mock<Client>(),
+			});
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool]);
+
+			await expect(
+				loadMcpToolArgumentOptions(createLoadOptionsCtx(), baseConnectionConfig, 'deleteRecord'),
+			).rejects.toThrow('Tool "deleteRecord" not found');
 		});
 	});
 });

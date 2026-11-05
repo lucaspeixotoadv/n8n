@@ -1,27 +1,36 @@
 import { type ILoadOptionsFunctions, type INodePropertyOptions } from 'n8n-workflow';
 
-import { loadMcpToolOptions } from '../shared/runtime';
+import {
+	loadMcpToolArgumentOptions,
+	loadMcpToolOptions,
+	type McpConnectionConfig,
+} from '../shared/runtime';
 import type { McpAuthenticationOption, McpServerTransport } from '../shared/types';
 
-export async function getTools(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-	const authentication = this.getNodeParameter('authentication') as McpAuthenticationOption;
-	const timeout = this.getNodeParameter('options.timeout', 60000) as number;
-	const node = this.getNode();
+function resolveConnectionConfig(ctx: ILoadOptionsFunctions): McpConnectionConfig {
+	const authentication = ctx.getNodeParameter('authentication') as McpAuthenticationOption;
+	const timeout = ctx.getNodeParameter('options.timeout', 60000) as number;
 
 	let serverTransport: McpServerTransport;
 	let endpointUrl: string;
-	if (node.typeVersion === 1) {
+	if (ctx.getNode().typeVersion === 1) {
 		serverTransport = 'sse';
-		endpointUrl = this.getNodeParameter('sseEndpoint') as string;
+		endpointUrl = ctx.getNodeParameter('sseEndpoint') as string;
 	} else {
-		serverTransport = this.getNodeParameter('serverTransport') as McpServerTransport;
-		endpointUrl = this.getNodeParameter('endpointUrl') as string;
+		serverTransport = ctx.getNodeParameter('serverTransport') as McpServerTransport;
+		endpointUrl = ctx.getNodeParameter('endpointUrl') as string;
 	}
 
-	return await loadMcpToolOptions(this, {
-		authentication,
-		transport: serverTransport,
-		endpointUrl,
-		timeout,
-	});
+	return { authentication, transport: serverTransport, endpointUrl, timeout };
+}
+
+export async function getTools(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+	return await loadMcpToolOptions(this, resolveConnectionConfig(this));
+}
+
+export async function getToolArguments(
+	this: ILoadOptionsFunctions,
+): Promise<INodePropertyOptions[]> {
+	const toolName = this.getCurrentNodeParameter('&tool') as string;
+	return await loadMcpToolArgumentOptions(this, resolveConnectionConfig(this), toolName);
 }

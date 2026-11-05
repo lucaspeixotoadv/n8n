@@ -9,9 +9,10 @@ import {
 	type SupplyData,
 } from 'n8n-workflow';
 
-import { getTools } from './loadOptions';
+import { getToolArguments, getTools } from './loadOptions';
 import type { McpToolIncludeMode } from './types';
 import { credentials, transportSelect } from '../shared/descriptions';
+import type { McpFixedArgument } from '../shared/fixed-arguments';
 import { buildMcpToolkit, executeMcpTool, type ResolvedMcpConfig } from '../shared/runtime';
 import type { McpAuthenticationOption, McpServerTransport } from '../shared/types';
 
@@ -46,6 +47,11 @@ function resolveConfigFromNodeParameters(
 			includeTools: ctx.getNodeParameter('includeTools', itemIndex, []) as string[],
 			excludeTools: ctx.getNodeParameter('excludeTools', itemIndex, []) as string[],
 		},
+		fixedArguments: ctx.getNodeParameter(
+			'fixedArguments.values',
+			itemIndex,
+			[],
+		) as McpFixedArgument[],
 	};
 }
 
@@ -256,6 +262,58 @@ export class McpClientTool implements INodeType {
 				},
 			},
 			{
+				displayName: 'Fixed Arguments',
+				name: 'fixedArguments',
+				type: 'fixedCollection',
+				placeholder: 'Add Fixed Argument',
+				description:
+					'Arguments this node sets itself. The AI Agent does not see them, and fills all other arguments.',
+				typeOptions: {
+					multipleValues: true,
+				},
+				default: {},
+				options: [
+					{
+						displayName: 'Fixed Argument',
+						name: 'values',
+						values: [
+							{
+								displayName: 'Tool Name or ID',
+								name: 'tool',
+								type: 'options',
+								default: '',
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+								typeOptions: {
+									loadOptionsMethod: 'getTools',
+									loadOptionsDependsOn: ['sseEndpoint', 'endpointUrl'],
+								},
+							},
+							{
+								displayName: 'Argument Name or ID',
+								name: 'argument',
+								type: 'options',
+								default: '',
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+								typeOptions: {
+									loadOptionsMethod: 'getToolArguments',
+									loadOptionsDependsOn: ['&tool'],
+								},
+							},
+							{
+								displayName: 'Value',
+								name: 'value',
+								type: 'string',
+								default: '',
+								description:
+									'Resolved when the tool runs. A fixed value is sent as text. Use an expression for a number, a boolean, a list, or an object.',
+							},
+						],
+					},
+				],
+			},
+			{
 				displayName: 'Options',
 				name: 'options',
 				placeholder: 'Add Option',
@@ -281,6 +339,7 @@ export class McpClientTool implements INodeType {
 	methods = {
 		loadOptions: {
 			getTools,
+			getToolArguments,
 		},
 	};
 

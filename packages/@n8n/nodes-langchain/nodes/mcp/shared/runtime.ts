@@ -22,6 +22,12 @@ import {
 	type SupplyData,
 } from 'n8n-workflow';
 
+import {
+	assertFixedArgumentsExist,
+	getFixedArguments,
+	hideFixedArguments,
+	type McpFixedArgument,
+} from './fixed-arguments';
 import { McpClientsManager } from './McpClientsManager';
 import type { McpAuthenticationOption, McpServerTransport, McpTool } from './types';
 import {
@@ -56,10 +62,10 @@ export type McpConnectionConfig = {
 };
 
 /**
- * Connection config plus the tool-filter to apply at agent-toolkit build time.
- * Produced by both the parameter-driven {@link McpClientTool} and the
- * registry-driven `McpRegistryClientTool`; the runtime functions below are
- * unaware of where the values came from.
+ * Connection config plus the tool-filter and the fixed arguments to apply at
+ * agent-toolkit build time. Produced by both the parameter-driven
+ * {@link McpClientTool} and the registry-driven `McpRegistryClientTool`; the
+ * runtime functions below are unaware of where the values came from.
  */
 export type ResolvedMcpConfig = McpConnectionConfig & {
 	toolFilter: {
@@ -67,6 +73,7 @@ export type ResolvedMcpConfig = McpConnectionConfig & {
 		includeTools: string[];
 		excludeTools: string[];
 	};
+	fixedArguments: McpFixedArgument[];
 };
 
 /**
@@ -100,6 +107,7 @@ async function connectAndGetTools(
 
 	try {
 		const allTools = await getAllTools(client.result);
+		assertFixedArgumentsExist(ctx.getNode(), allTools, config.fixedArguments);
 		const mcpTools = getSelectedTools({
 			tools: allTools,
 			mode: config.toolFilter.mode,
@@ -162,22 +170,25 @@ export async function buildMcpToolkit(
 	try {
 		const tools = mcpTools.map((tool) => {
 			const prefixedName = buildMcpToolName(node.name, tool.name);
+			const fixedArguments = getFixedArguments(config.fixedArguments, tool.name);
+			const callTool = createCallTool(
+				tool.name,
+				client,
+				config.timeout,
+				(errorMessage) => {
+					const callError = new NodeOperationError(node, errorMessage, { itemIndex });
+					void ctx.addOutputData(NodeConnectionTypes.AiTool, itemIndex, callError);
+					ctx.logger.error(`MCP client: Tool "${tool.name}" failed to execute`, {
+						error: callError,
+					});
+				},
+				() => ctx.getExecutionCancelSignal(),
+			);
 			return logWrapper(
 				mcpToolToDynamicTool(
-					{ ...tool, name: prefixedName },
-					createCallTool(
-						tool.name,
-						client,
-						config.timeout,
-						(errorMessage) => {
-							const callError = new NodeOperationError(node, errorMessage, { itemIndex });
-							void ctx.addOutputData(NodeConnectionTypes.AiTool, itemIndex, callError);
-							ctx.logger.error(`MCP client: Tool "${tool.name}" failed to execute`, {
-								error: callError,
-							});
-						},
-						() => ctx.getExecutionCancelSignal(),
-					),
+					{ ...hideFixedArguments(tool, fixedArguments), name: prefixedName },
+					async (toolArguments: IDataObject) =>
+						await callTool({ ...toolArguments, ...fixedArguments }),
 					attribution,
 				),
 				ctx,
@@ -230,10 +241,12 @@ async function runToolCall(opts: {
 	mcpTools: McpTool[];
 	client: Client;
 	timeout: number;
+	fixedArguments: McpFixedArgument[];
 	itemIndex: number;
 	returnData: INodeExecutionData[];
 }): Promise<void> {
-	const { ctx, node, item, mcpTools, client, timeout, itemIndex, returnData } = opts;
+	const { ctx, node, item, mcpTools, client, timeout, fixedArguments, itemIndex, returnData } =
+		opts;
 
 	if (!item.json.tool || typeof item.json.tool !== 'string') {
 		throw new NodeOperationError(node, 'Tool name not found in item.json.tool or item.tool', {
@@ -254,7 +267,10 @@ async function runToolCall(opts: {
 				: toolArguments;
 
 		const result = await client.callTool(
-			{ name: tool.name, arguments: sanitizedToolArguments },
+			{
+				name: tool.name,
+				arguments: { ...sanitizedToolArguments, ...getFixedArguments(fixedArguments, tool.name) },
+			},
 			CallToolResultSchema,
 			{
 				timeout,
@@ -342,6 +358,7 @@ export async function executeMcpTool(
 				mcpTools,
 				client,
 				timeout: config.timeout,
+				fixedArguments: config.fixedArguments,
 				itemIndex,
 				returnData,
 			});
@@ -367,6 +384,7 @@ export async function executeMcpTool(
 				mcpTools,
 				client,
 				timeout: config.timeout,
+				fixedArguments: config.fixedArguments,
 				itemIndex,
 				returnData,
 			});
@@ -379,15 +397,13 @@ export async function executeMcpTool(
 }
 
 /**
- * Connect to an MCP server and return its tool list as `INodePropertyOptions[]`
- * for use in a `loadOptionsMethod` dropdown. Both the parameter-driven and
- * registry-driven nodes call this — they only differ in how `config` is built.
+ * Connect to an MCP server, list its tools, and close the connection. Backs the
+ * `loadOptionsMethod` dropdowns of the parameter-driven and registry-driven nodes.
  */
-export async function loadMcpToolOptions(
+async function listMcpTools(
 	ctx: ILoadOptionsFunctions,
 	config: McpConnectionConfig,
-): Promise<INodePropertyOptions[]> {
-	const node = ctx.getNode();
+): Promise<McpTool[]> {
 	const client = await connectMcpClientForCredential(ctx, {
 		authentication: config.authentication,
 		serverTransport: config.transport,
@@ -397,18 +413,54 @@ export async function loadMcpToolOptions(
 	});
 
 	if (!client.ok) {
-		throw mapToNodeOperationError(node, client.error);
+		throw mapToNodeOperationError(ctx.getNode(), client.error);
 	}
 
 	try {
-		const tools = await getAllTools(client.result);
-		return tools.map((tool) => ({
-			name: tool.name,
-			value: tool.name,
-			description: tool.description,
-			inputSchema: tool.inputSchema,
-		}));
+		return await getAllTools(client.result);
 	} finally {
 		await client.result.close();
 	}
+}
+
+/**
+ * Connect to an MCP server and return its tool list as `INodePropertyOptions[]`
+ * for use in a `loadOptionsMethod` dropdown. Both the parameter-driven and
+ * registry-driven nodes call this — they only differ in how `config` is built.
+ */
+export async function loadMcpToolOptions(
+	ctx: ILoadOptionsFunctions,
+	config: McpConnectionConfig,
+): Promise<INodePropertyOptions[]> {
+	const tools = await listMcpTools(ctx, config);
+	return tools.map((tool) => ({
+		name: tool.name,
+		value: tool.name,
+		description: tool.description,
+		inputSchema: tool.inputSchema,
+	}));
+}
+
+/**
+ * Connect to an MCP server and return the arguments of one of its tools as
+ * `INodePropertyOptions[]` for use in a `loadOptionsMethod` dropdown.
+ */
+export async function loadMcpToolArgumentOptions(
+	ctx: ILoadOptionsFunctions,
+	config: McpConnectionConfig,
+	toolName: string,
+): Promise<INodePropertyOptions[]> {
+	if (!toolName) return [];
+
+	const tools = await listMcpTools(ctx, config);
+	const tool = tools.find(({ name }) => name === toolName);
+	if (!tool) {
+		throw new NodeOperationError(ctx.getNode(), `Tool "${toolName}" not found`);
+	}
+
+	return Object.entries(tool.inputSchema.properties ?? {}).map(([name, schema]) => ({
+		name,
+		value: name,
+		description: typeof schema === 'object' ? schema.description : undefined,
+	}));
 }

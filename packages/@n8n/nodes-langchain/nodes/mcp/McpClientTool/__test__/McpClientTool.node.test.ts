@@ -19,7 +19,7 @@ import type { MockedFunction } from 'vitest';
 import { mock, mockDeep } from 'vitest-mock-extended';
 
 import { McpClientsManager } from '../../shared/McpClientsManager';
-import { getTools } from '../loadOptions';
+import { getToolArguments, getTools } from '../loadOptions';
 import { McpClientTool } from '../McpClientTool.node';
 import { buildMcpToolName } from '../utils';
 
@@ -70,11 +70,11 @@ describe('McpClientTool', () => {
 				mock<ILoadOptionsFunctions>({
 					...egressHelpers<ILoadOptionsFunctions>(),
 					getNode: vi.fn(() => mock<INode>({ typeVersion: 1 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 			);
@@ -95,11 +95,11 @@ describe('McpClientTool', () => {
 			const mockLoadOptionsFunctions = mock<ILoadOptionsFunctions>({
 				...egressHelpers<ILoadOptionsFunctions>(),
 				getNode: vi.fn(() => node),
-				getNodeParameter: vi.fn((key: string) => {
+				getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 					const parameters: Record<string, unknown> = {
 						authentication: 'none',
 					};
-					return parameters[key] as never;
+					return (parameters[key] ?? fallback) as never;
 				}),
 			});
 
@@ -129,11 +129,11 @@ describe('McpClientTool', () => {
 				mock<ILoadOptionsFunctions>({
 					...egressHelpers<ILoadOptionsFunctions>(),
 					getNode: vi.fn(() => mock<INode>({ typeVersion: 1 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 			);
@@ -142,7 +142,86 @@ describe('McpClientTool', () => {
 		});
 	});
 
+	describe('loadOptions: getToolArguments', () => {
+		it('should return the arguments of the tool chosen in the same fixed argument', async () => {
+			vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+			vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({
+				tools: [
+					{
+						name: 'MyTool',
+						inputSchema: {
+							type: 'object',
+							properties: { input: { type: 'string', description: 'The input' } },
+						},
+					},
+				],
+			});
+
+			const result = await getToolArguments.call(
+				mock<ILoadOptionsFunctions>({
+					...egressHelpers<ILoadOptionsFunctions>(),
+					getNode: vi.fn(() => mock<INode>({ typeVersion: 1 })),
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
+						const parameters: Record<string, unknown> = { authentication: 'none' };
+						return (parameters[key] ?? fallback) as never;
+					}),
+					getCurrentNodeParameter: vi.fn((key: string) => (key === '&tool' ? 'MyTool' : undefined)),
+				}),
+			);
+
+			// Each option is [name, value, description]: the argument name is both the label and the value.
+			expect(result.map(({ name, value, description }) => [name, value, description])).toEqual([
+				['input', 'input', 'The input'],
+			]);
+		});
+	});
+
 	describe('supplyData', () => {
+		it('should apply the fixed arguments from the node parameters', async () => {
+			vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+			const callTool = vi
+				.spyOn(Client.prototype, 'callTool')
+				.mockResolvedValue({ content: [{ type: 'text', text: 'result from tool' }] });
+			vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({
+				tools: [
+					{
+						name: 'MyTool',
+						inputSchema: {
+							type: 'object',
+							properties: { input: { type: 'string' }, account: { type: 'string' } },
+							required: ['input', 'account'],
+						},
+					},
+				],
+			});
+
+			const supplyDataResult = await new McpClientTool().supplyData.call(
+				mock<ISupplyDataFunctions>({
+					...egressHelpers<ISupplyDataFunctions>(),
+					getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP Client' })),
+					logger: { debug: vi.fn(), error: vi.fn() },
+					addInputData: vi.fn(() => ({ index: 0 })),
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
+						const parameters: Record<string, unknown> = {
+							authentication: 'none',
+							'fixedArguments.values': [{ tool: 'MyTool', argument: 'account', value: 'acme' }],
+						};
+						return (parameters[key] ?? fallback) as never;
+					}),
+				}),
+				0,
+			);
+
+			const [tool] = (supplyDataResult.response as StructuredToolkit).getTools();
+			await tool.invoke({ input: 'foo' });
+
+			expect(callTool).toHaveBeenCalledWith(
+				{ name: 'MyTool', arguments: { input: 'foo', account: 'acme' } },
+				expect.anything(),
+				expect.anything(),
+			);
+		});
+
 		it('should return a valid toolkit with usable tools (that returns a string)', async () => {
 			vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
 			vi.spyOn(Client.prototype, 'callTool').mockResolvedValue({
@@ -169,11 +248,11 @@ describe('McpClientTool', () => {
 					getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP Client' })),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -215,13 +294,13 @@ describe('McpClientTool', () => {
 							name: 'MCP Client',
 						}),
 					),
-					getNodeParameter: vi.fn((key, _index) => {
+					getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, any> = {
 							include: 'selected',
 							includeTools: ['MyTool2'],
 							authentication: 'none',
 						};
-						return parameters[key];
+						return parameters[key] ?? fallback;
 					}),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
@@ -263,13 +342,13 @@ describe('McpClientTool', () => {
 							name: 'MCP Client',
 						}),
 					),
-					getNodeParameter: vi.fn((key, _index) => {
+					getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, any> = {
 							include: 'except',
 							excludeTools: ['MyTool2'],
 							authentication: 'none',
 						};
-						return parameters[key];
+						return parameters[key] ?? fallback;
 					}),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
@@ -303,14 +382,14 @@ describe('McpClientTool', () => {
 				mock<ISupplyDataFunctions>({
 					...egressHelpers<ISupplyDataFunctions>(),
 					getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP Client' })),
-					getNodeParameter: vi.fn((key, _index) => {
+					getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, any> = {
 							include: 'except',
 							excludeTools: ['MyTool2'],
 							authentication: 'headerAuth',
 							sseEndpoint: 'https://my-mcp-endpoint.ai/sse',
 						};
-						return parameters[key];
+						return parameters[key] ?? fallback;
 					}),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
@@ -359,14 +438,14 @@ describe('McpClientTool', () => {
 				mock<ISupplyDataFunctions>({
 					...egressHelpers<ISupplyDataFunctions>(),
 					getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP Client' })),
-					getNodeParameter: vi.fn((key, _index) => {
+					getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, any> = {
 							include: 'except',
 							excludeTools: ['MyTool2'],
 							authentication: 'bearerAuth',
 							sseEndpoint: 'https://my-mcp-endpoint.ai/sse',
 						};
-						return parameters[key];
+						return parameters[key] ?? fallback;
 					}),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
@@ -424,11 +503,11 @@ describe('McpClientTool', () => {
 					),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -464,11 +543,11 @@ describe('McpClientTool', () => {
 					getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP Client' })),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -502,11 +581,11 @@ describe('McpClientTool', () => {
 					getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP Client' })),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -540,11 +619,11 @@ describe('McpClientTool', () => {
 					getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP Client' })),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -582,11 +661,11 @@ describe('McpClientTool', () => {
 				),
 				logger: { debug: vi.fn(), error: vi.fn() },
 				addInputData: vi.fn(() => ({ index: 0 })),
-				getNodeParameter: vi.fn((key: string) => {
+				getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 					const parameters: Record<string, unknown> = {
 						authentication: 'none',
 					};
-					return parameters[key] as never;
+					return (parameters[key] ?? fallback) as never;
 				}),
 			});
 			const supplyDataResult = await new McpClientTool().supplyData.call(supplyDataFunctions, 0);
@@ -628,11 +707,11 @@ describe('McpClientTool', () => {
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
 					getExecutionCancelSignal: vi.fn(() => abortController.signal),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -703,11 +782,11 @@ describe('McpClientTool', () => {
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
 					getExecutionCancelSignal: vi.fn(() => abortController.signal),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -747,11 +826,11 @@ describe('McpClientTool', () => {
 				logger: { debug: vi.fn(), error: errorLogger },
 				addInputData: vi.fn(() => ({ index: 0 })),
 				getExecutionCancelSignal: vi.fn(() => abortController.signal),
-				getNodeParameter: vi.fn((key: string) => {
+				getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 					const parameters: Record<string, unknown> = {
 						authentication: 'none',
 					};
-					return parameters[key] as never;
+					return (parameters[key] ?? fallback) as never;
 				}),
 			});
 			const supplyDataResult = await new McpClientTool().supplyData.call(supplyDataFunctions, 0);
@@ -783,11 +862,11 @@ describe('McpClientTool', () => {
 						logger: { debug: vi.fn(), error: vi.fn() },
 						addInputData: vi.fn(() => ({ index: 0 })),
 						addOutputData: vi.fn(),
-						getNodeParameter: vi.fn((key: string) => {
+						getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 							const parameters: Record<string, unknown> = {
 								authentication: 'none',
 							};
-							return parameters[key] as never;
+							return (parameters[key] ?? fallback) as never;
 						}),
 					}),
 					0,
@@ -816,11 +895,11 @@ describe('McpClientTool', () => {
 					getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'McpClientTool' })),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -854,12 +933,12 @@ describe('McpClientTool', () => {
 				mock<ISupplyDataFunctions>({
 					...egressHelpers<ISupplyDataFunctions>(),
 					getNode: vi.fn(() => mockNode),
-					getNodeParameter: vi.fn((key, _index) => {
+					getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, any> = {
 							'options.timeout': 200,
 							authentication: 'none',
 						};
-						return parameters[key];
+						return parameters[key] ?? fallback;
 					}),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
@@ -911,7 +990,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -920,7 +999,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -982,7 +1061,7 @@ describe('McpClientTool', () => {
 							},
 						},
 					]),
-					getNodeParameter: vi.fn((key) => {
+					getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 						const params: Record<string, any> = {
 							include: 'all',
 							includeTools: [],
@@ -991,7 +1070,7 @@ describe('McpClientTool', () => {
 							sseEndpoint: 'https://test.com/sse',
 							'options.timeout': 60000,
 						};
-						return params[key];
+						return params[key] ?? fallback;
 					}),
 				});
 
@@ -1047,7 +1126,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1056,7 +1135,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1100,7 +1179,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1110,7 +1189,7 @@ describe('McpClientTool', () => {
 						endpointUrl: 'https://test.com/mcp',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1154,7 +1233,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1164,7 +1243,7 @@ describe('McpClientTool', () => {
 						endpointUrl: 'https://test.com/mcp',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1201,7 +1280,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1211,7 +1290,7 @@ describe('McpClientTool', () => {
 						endpointUrl: 'https://test.com/mcp',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1247,7 +1326,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1256,7 +1335,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1281,7 +1360,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1290,7 +1369,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1336,7 +1415,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1345,7 +1424,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1403,7 +1482,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'selected',
 						includeTools: ['get_weather'],
@@ -1412,7 +1491,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1456,7 +1535,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1465,7 +1544,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1554,7 +1633,7 @@ describe('McpClientTool', () => {
 				...egressHelpers<IExecuteFunctions>(),
 				getNode: vi.fn(() => mockNode),
 				getInputData: vi.fn(() => [{ json: { tool: 'get_weather', location: 'Berlin' } }]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1563,7 +1642,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 				getExecutionCancelSignal: vi.fn(() => abortController.signal),
 			});
@@ -1603,7 +1682,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1612,7 +1691,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 				getExecutionCancelSignal: vi.fn(() => abortController.signal),
 			});
@@ -1653,11 +1732,11 @@ describe('McpClientTool', () => {
 				logger: { debug: vi.fn(), error: vi.fn() },
 				addInputData: vi.fn(() => ({ index: 0 })),
 				getExecutionCancelSignal: vi.fn(() => abortController.signal),
-				getNodeParameter: vi.fn((key: string) => {
+				getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 					const parameters: Record<string, unknown> = {
 						authentication: 'none',
 					};
-					return parameters[key] as never;
+					return (parameters[key] ?? fallback) as never;
 				}),
 			});
 
@@ -1736,7 +1815,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1745,7 +1824,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1780,7 +1859,7 @@ describe('McpClientTool', () => {
 						},
 					},
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1789,7 +1868,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1808,7 +1887,7 @@ describe('McpClientTool', () => {
 				...egressHelpers<IExecuteFunctions>(),
 				getNode: vi.fn(() => mockNode),
 				getInputData: vi.fn(() => [{ json: { tool: 'get_weather' } }]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1817,7 +1896,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1846,7 +1925,7 @@ describe('McpClientTool', () => {
 				...egressHelpers<IExecuteFunctions>(),
 				getNode: vi.fn(() => mockNode),
 				getInputData: vi.fn(() => [{ json: { location: 'Berlin' } }]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1855,7 +1934,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1876,7 +1955,7 @@ describe('McpClientTool', () => {
 				...egressHelpers<IExecuteFunctions>(),
 				getNode: vi.fn(() => mockNode),
 				getInputData: vi.fn(() => [{ json: { tool: 'get_weather' } }]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -1885,7 +1964,7 @@ describe('McpClientTool', () => {
 						sseEndpoint: 'https://test.com/sse',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 
@@ -1921,11 +2000,11 @@ describe('McpClientTool', () => {
 					),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -1961,11 +2040,11 @@ describe('McpClientTool', () => {
 					),
 					logger: { debug: vi.fn(), error: vi.fn() },
 					addInputData: vi.fn(() => ({ index: 0 })),
-					getNodeParameter: vi.fn((key: string) => {
+					getNodeParameter: vi.fn((key: string, _itemIndex?: number, fallback?: unknown) => {
 						const parameters: Record<string, unknown> = {
 							authentication: 'none',
 						};
-						return parameters[key] as never;
+						return (parameters[key] ?? fallback) as never;
 					}),
 				}),
 				0,
@@ -2000,13 +2079,13 @@ describe('McpClientTool', () => {
 						name: 'MCP Client',
 					}),
 				),
-				getNodeParameter: vi.fn((key, _index) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const parameters: Record<string, any> = {
 						include: 'all',
 						authentication: 'bearerAuth',
 						sseEndpoint: endpoint,
 					};
-					return parameters[key as string];
+					return parameters[key as string] ?? fallback;
 				}),
 				logger: { debug: vi.fn(), error: vi.fn() },
 				addInputData: vi.fn(() => ({ index: 0 })),
@@ -2118,12 +2197,12 @@ describe('McpClientTool', () => {
 			const ctx = mock<ILoadOptionsFunctions>({
 				...egressHelpers<ILoadOptionsFunctions>(),
 				getNode: vi.fn(() => node),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						authentication: 'bearerAuth',
 						sseEndpoint: 'https://attacker.example/sse',
 					};
-					return params[key as string];
+					return params[key as string] ?? fallback;
 				}),
 				getCredentials: vi.fn().mockResolvedValue({
 					token: 'my-token',
@@ -2151,7 +2230,7 @@ describe('McpClientTool', () => {
 				getInputData: vi.fn(() => [
 					{ json: { tool: buildMcpToolName('MCP Client', 'get_weather'), location: 'Berlin' } },
 				]),
-				getNodeParameter: vi.fn((key) => {
+				getNodeParameter: vi.fn((key, _itemIndex?: number, fallback?: unknown) => {
 					const params: Record<string, any> = {
 						include: 'all',
 						includeTools: [],
@@ -2161,7 +2240,7 @@ describe('McpClientTool', () => {
 						endpointUrl: 'https://test.com/mcp',
 						'options.timeout': 60000,
 					};
-					return params[key];
+					return params[key] ?? fallback;
 				}),
 			});
 		}

@@ -235,6 +235,7 @@ function resolveConfig(
 			includeTools: ctx.getNodeParameter('includeTools', itemIndex, []) as string[],
 			excludeTools: ctx.getNodeParameter('excludeTools', itemIndex, []) as string[],
 		},
+		fixedArguments: [],
 	};
 }
 

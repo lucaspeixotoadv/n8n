@@ -210,6 +210,7 @@ describe('McpRegistryClientTool', () => {
 					includeTools: ['notion-search'],
 					excludeTools: [],
 				},
+				fixedArguments: [],
 			};
 			expect(buildMcpToolkitMock).toHaveBeenCalledWith(
 				ctx,
