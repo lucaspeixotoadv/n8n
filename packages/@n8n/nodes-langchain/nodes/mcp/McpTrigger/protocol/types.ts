@@ -11,6 +11,7 @@ export interface McpToolCallInfo {
 export interface McpToolResult {
 	[key: string]: unknown;
 	content: McpContentBlock[];
+	structuredContent?: Record<string, unknown>;
 	isError?: boolean;
 }
 

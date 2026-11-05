@@ -312,7 +312,7 @@ const MCP_LIST_TOOLS_REQUEST_MARKER = { _listToolsRequest: true };
 
 | Method | Purpose |
 |--------|---------|
-| `formatToolResult(result)` | Converts a tool's return value (string, object, etc.) into an `McpToolResult` with proper content blocks |
+| `formatToolResult(result)` | Converts a tool's return value (string, object, etc.) into an `McpToolResult` with proper content blocks. A JSON object result also goes in `structuredContent`, and a JSON array result goes in `structuredContent.result` |
 | `formatError(error)` | Converts an Error into an `McpToolResult` with `isError: true` and the error message |
 
 #### Example Flow
@@ -332,7 +332,10 @@ const info = MessageParser.extractToolCallInfo(body);
 // 4. Execute tool and format result
 const result = await executeTool(info);  // { temperature: 15, unit: 'celsius' }
 const formatted = MessageFormatter.formatToolResult(result);
-// { content: [{ type: 'text', text: '{"temperature":15,"unit":"celsius"}' }] }
+// {
+//   content: [{ type: 'text', text: '{"temperature":15,"unit":"celsius"}' }],
+//   structuredContent: { temperature: 15, unit: 'celsius' },
+// }
 
 // 5. Or format an error
 const error = MessageFormatter.formatError(new Error('City not found'));

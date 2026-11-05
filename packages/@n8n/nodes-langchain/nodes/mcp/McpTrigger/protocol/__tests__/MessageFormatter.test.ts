@@ -86,11 +86,55 @@ describe('MessageFormatter', () => {
 			});
 		});
 
+		describe('structuredContent', () => {
+			it('should send the items of a workflow tool in result, next to the text', () => {
+				// A workflow tool returns its items as pretty-printed JSON text.
+				const text = JSON.stringify([{ success: true, id: '1234567890123456' }], null, 2);
+
+				expect(MessageFormatter.formatToolResult(text)).toEqual({
+					content: [{ type: 'text', text }],
+					structuredContent: { result: [{ success: true, id: '1234567890123456' }] },
+				});
+			});
+
+			it('should send a JSON object text as it is', () => {
+				expect(MessageFormatter.formatToolResult('{"success":true}')).toEqual({
+					content: [{ type: 'text', text: '{"success":true}' }],
+					structuredContent: { success: true },
+				});
+			});
+
+			it.each(['plain text', '42', 'true', 'null', '"quoted"'])(
+				'should send only text for %s',
+				(text) => {
+					expect(MessageFormatter.formatToolResult(text)).toEqual({
+						content: [{ type: 'text', text }],
+					});
+				},
+			);
+
+			it('should not send structuredContent with an error', () => {
+				expect(MessageFormatter.formatToolResult({ error: 'failed' }, true)).toEqual({
+					isError: true,
+					content: [{ type: 'text', text: '{"error":"failed"}' }],
+				});
+			});
+
+			it('should not send structuredContent for content passed through from an MCP tool', () => {
+				const result = '[{"type":"text","text":"Hello"}]';
+
+				expect(MessageFormatter.formatToolResult(result, false, true)).toEqual({
+					content: [{ type: 'text', text: 'Hello' }],
+				});
+			});
+		});
+
 		describe('MCP content array gating', () => {
 			it('should wrap an MCP content array when isFromMcpTool is false (default)', () => {
 				const result = [{ type: 'text', text: 'Hello world' }];
 				expect(MessageFormatter.formatToolResult(result)).toEqual({
 					content: [{ type: 'text', text: JSON.stringify(result) }],
+					structuredContent: { result },
 				});
 			});
 
@@ -98,6 +142,7 @@ describe('MessageFormatter', () => {
 				const result = [{ type: 'text', text: 'Hello world' }];
 				expect(MessageFormatter.formatToolResult(result, false, false)).toEqual({
 					content: [{ type: 'text', text: JSON.stringify(result) }],
+					structuredContent: { result },
 				});
 			});
 
@@ -108,6 +153,7 @@ describe('MessageFormatter', () => {
 				];
 				expect(MessageFormatter.formatToolResult(result, false, false)).toEqual({
 					content: [{ type: 'text', text: JSON.stringify(result) }],
+					structuredContent: { result },
 				});
 			});
 
@@ -124,6 +170,7 @@ describe('MessageFormatter', () => {
 				const result = '[{"type":"text","text":"{\\"success\\":true}"}]';
 				expect(MessageFormatter.formatToolResult(result)).toEqual({
 					content: [{ type: 'text', text: result }],
+					structuredContent: { result: JSON.parse(result) },
 				});
 			});
 
@@ -131,6 +178,7 @@ describe('MessageFormatter', () => {
 				const result = '[{"type":"text","text":"{\\"success\\":true}"}]';
 				expect(MessageFormatter.formatToolResult(result, false, false)).toEqual({
 					content: [{ type: 'text', text: result }],
+					structuredContent: { result: JSON.parse(result) },
 				});
 			});
 
@@ -142,6 +190,7 @@ describe('MessageFormatter', () => {
 				const raw = JSON.stringify(parsedContent);
 				expect(MessageFormatter.formatToolResult(raw, false, false)).toEqual({
 					content: [{ type: 'text', text: raw }],
+					structuredContent: { result: parsedContent },
 				});
 			});
 
@@ -189,12 +238,14 @@ describe('MessageFormatter', () => {
 			it('should wrap the original string when valid JSON is not an MCP content array', () => {
 				expect(MessageFormatter.formatToolResult('[1,2,3]', false, true)).toEqual({
 					content: [{ type: 'text', text: '[1,2,3]' }],
+					structuredContent: { result: [1, 2, 3] },
 				});
 			});
 
 			it('should wrap the original string when valid JSON is a plain object', () => {
 				expect(MessageFormatter.formatToolResult('{"a":1}', false, true)).toEqual({
 					content: [{ type: 'text', text: '{"a":1}' }],
+					structuredContent: { a: 1 },
 				});
 			});
 
@@ -205,6 +256,7 @@ describe('MessageFormatter', () => {
 				]);
 				expect(MessageFormatter.formatToolResult(result, false, true)).toEqual({
 					content: [{ type: 'text', text: result }],
+					structuredContent: { result: JSON.parse(result) },
 				});
 			});
 
@@ -222,6 +274,7 @@ describe('MessageFormatter', () => {
 				const result = [{ type: 'invalid', text: 'hello' }];
 				expect(MessageFormatter.formatToolResult(result)).toEqual({
 					content: [{ type: 'text', text: '[{"type":"invalid","text":"hello"}]' }],
+					structuredContent: { result },
 				});
 			});
 
@@ -229,6 +282,7 @@ describe('MessageFormatter', () => {
 				const result = [{ type: 'text' }];
 				expect(MessageFormatter.formatToolResult(result)).toEqual({
 					content: [{ type: 'text', text: '[{"type":"text"}]' }],
+					structuredContent: { result },
 				});
 			});
 
@@ -236,6 +290,7 @@ describe('MessageFormatter', () => {
 				const result = [{ type: 'image', mimeType: 'image/png' }];
 				expect(MessageFormatter.formatToolResult(result)).toEqual({
 					content: [{ type: 'text', text: '[{"type":"image","mimeType":"image/png"}]' }],
+					structuredContent: { result },
 				});
 			});
 
@@ -243,6 +298,7 @@ describe('MessageFormatter', () => {
 				const result = [{ type: 'image', data: 'base64data' }];
 				expect(MessageFormatter.formatToolResult(result)).toEqual({
 					content: [{ type: 'text', text: '[{"type":"image","data":"base64data"}]' }],
+					structuredContent: { result },
 				});
 			});
 
@@ -255,6 +311,7 @@ describe('MessageFormatter', () => {
 							text: '[{"type":"resource","resource":{"text":"content"}}]',
 						},
 					],
+					structuredContent: { result },
 				});
 			});
 
@@ -267,6 +324,7 @@ describe('MessageFormatter', () => {
 							text: '[{"type":"resource","resource":{"uri":"file:///test.txt"}}]',
 						},
 					],
+					structuredContent: { result },
 				});
 			});
 
@@ -279,6 +337,7 @@ describe('MessageFormatter', () => {
 							text: '[{"type":"resource_link","name":"Example resource"}]',
 						},
 					],
+					structuredContent: { result },
 				});
 			});
 
@@ -291,6 +350,7 @@ describe('MessageFormatter', () => {
 							text: '[{"type":"resource_link","uri":"https://example.com/resource"}]',
 						},
 					],
+					structuredContent: { result },
 				});
 			});
 
@@ -306,6 +366,7 @@ describe('MessageFormatter', () => {
 							text: '[{"type":"text","text":"valid"},{"type":"invalid","text":"not valid"}]',
 						},
 					],
+					structuredContent: { result },
 				});
 			});
 
@@ -313,6 +374,7 @@ describe('MessageFormatter', () => {
 				const result: unknown[] = [];
 				expect(MessageFormatter.formatToolResult(result)).toEqual({
 					content: [{ type: 'text', text: '[]' }],
+					structuredContent: { result },
 				});
 			});
 		});
@@ -322,6 +384,7 @@ describe('MessageFormatter', () => {
 				const result = { data: 'value', count: 42 };
 				expect(MessageFormatter.formatToolResult(result)).toEqual({
 					content: [{ type: 'text', text: '{"data":"value","count":42}' }],
+					structuredContent: result,
 				});
 			});
 
@@ -389,18 +452,21 @@ describe('MessageFormatter', () => {
 				const result = [1, 2, 3];
 				expect(MessageFormatter.formatToolResult(result)).toEqual({
 					content: [{ type: 'text', text: '[1,2,3]' }],
+					structuredContent: { result },
 				});
 			});
 
 			it('should handle empty array', () => {
 				expect(MessageFormatter.formatToolResult([])).toEqual({
 					content: [{ type: 'text', text: '[]' }],
+					structuredContent: { result: [] },
 				});
 			});
 
 			it('should handle empty object', () => {
 				expect(MessageFormatter.formatToolResult({})).toEqual({
 					content: [{ type: 'text', text: '{}' }],
+					structuredContent: {},
 				});
 			});
 

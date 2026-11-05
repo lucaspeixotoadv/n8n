@@ -1,3 +1,4 @@
+import { isRecord } from '@n8n/utils/is-record';
 import type { CredentialCheckResult } from 'n8n-workflow';
 
 import { isToolErrorResult } from '@utils/tool-error-result';
@@ -6,21 +7,49 @@ import type { McpToolResult } from './types';
 import { isMcpContentArray, type McpContentBlock } from '../../shared/utils';
 
 /**
- * Parse a tool result string that may be a JSON-serialized MCP content array.
+ * Returns the value of a JSON text, or `undefined` when the text is not JSON.
  *
- * Proxy mode passes the tool result through `DynamicStructuredTool.invoke`,
+ * Tools hand their result to the server through `DynamicStructuredTool.invoke`,
  * which serializes the tool's return value to a string before it leaves the
- * tool. The raw content array therefore arrives here as JSON text. Malformed
- * JSON and JSON that is not an MCP content array return `null` so the caller
- * wraps the original string.
+ * tool. A structured result therefore arrives here as JSON text.
  */
-function parseMcpContentArrayString(value: string): McpContentBlock[] | null {
+function parseJson(value: string): unknown {
 	try {
-		const parsed: unknown = JSON.parse(value);
-		return isMcpContentArray(parsed) ? parsed : null;
+		return JSON.parse(value);
 	} catch {
-		return null;
+		return undefined;
 	}
+}
+
+/**
+ * Returns the MCP content array of a result from an MCP tool, as an array or as
+ * its JSON text (proxy mode), or `null` so the caller wraps the result itself.
+ */
+function getMcpContentArray(result: unknown): McpContentBlock[] | null {
+	const value = typeof result === 'string' ? parseJson(result) : result;
+	return isMcpContentArray(value) ? value : null;
+}
+
+/**
+ * Returns the `structuredContent` of a result that is a JSON object or array,
+ * as a value or as its JSON text. MCP requires an object, so an array goes in
+ * `{ result }`, which keeps one shape for any number of items. Any other result
+ * has no structured form.
+ */
+function getStructuredContent(result: unknown): Record<string, unknown> | undefined {
+	const value = typeof result === 'string' ? parseJson(result) : result;
+	if (Array.isArray(value)) return { result: value };
+	return isRecord(value) ? value : undefined;
+}
+
+/**
+ * Returns the text of a result for its text content block.
+ */
+function toText(result: unknown): string {
+	if (typeof result === 'string') return result;
+	if (typeof result === 'object' && result !== null) return JSON.stringify(result);
+	// null, undefined, numbers, booleans, bigints, symbols, and functions
+	return String(result);
 }
 
 /**
@@ -37,37 +66,14 @@ export interface CredentialGateElicitationOutcome {
 
 export class MessageFormatter {
 	static formatToolResult(result: unknown, isError = false, isFromMcpTool = false): McpToolResult {
-		let content: McpContentBlock[];
+		const mcpContent = isFromMcpTool ? getMcpContentArray(result) : null;
+		const content = mcpContent ?? [{ type: 'text' as const, text: toText(result) }];
 
-		if (isFromMcpTool && isMcpContentArray(result)) {
-			content = result; // pass-through
-		} else if (typeof result === 'object' && result !== null) {
-			content = [{ type: 'text' as const, text: JSON.stringify(result) }];
-		} else if (typeof result === 'string') {
-			// Proxy mode hands us a JSON string, so parse before wrapping. A failed
-			// parse or a non-MCP value falls back to the original string, never the
-			// parsed value.
-			const parsedContent = isFromMcpTool ? parseMcpContentArrayString(result) : null;
-			content = parsedContent ?? [{ type: 'text' as const, text: result }];
-		} else if (result === null || result === undefined) {
-			content = [{ type: 'text' as const, text: String(result) }];
-		} else if (
-			typeof result === 'number' ||
-			typeof result === 'boolean' ||
-			typeof result === 'bigint'
-		) {
-			content = [{ type: 'text' as const, text: result.toString() }];
-		} else {
-			// Remaining types: symbol, function - convert to string representation
-			content = [
-				{
-					type: 'text' as const,
-					text: String(result),
-				},
-			];
-		}
+		if (isError) return { isError: true, content };
 
-		return isError ? { isError: true, content } : { content };
+		// The text block stays for clients that read only `content`.
+		const structuredContent = mcpContent ? undefined : getStructuredContent(result);
+		return structuredContent ? { content, structuredContent } : { content };
 	}
 
 	static isErrorResult(result: unknown): boolean {
