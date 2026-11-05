@@ -1,11 +1,10 @@
 import type { CallbackManagerForLLMRun } from '@langchain/core/callbacks/manager';
-import type { BaseMessage } from '@langchain/core/messages';
+import { AIMessage, type BaseMessage } from '@langchain/core/messages';
 import type { ChatGeneration, ChatGenerationChunk, ChatResult } from '@langchain/core/outputs';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { OperationalError } from 'n8n-workflow';
 
-import { completeArrayItems } from './array-items';
-import { toGeminiHistory } from './foreign-turns';
+import { rewriteForeignTurns, toTextAndToolCalls } from './foreign-turns';
 import { dropOrphanedLeadingToolCycle } from './turn-order';
 
 const MALFORMED_FUNCTION_CALL_FINISH_REASON = 'MALFORMED_FUNCTION_CALL';
@@ -25,18 +24,24 @@ function getFinishMessage(generation: ChatGeneration | undefined): string | unde
 	return typeof finishMessage === 'string' ? finishMessage : undefined;
 }
 
+/** The `model_provider` that `@langchain/google-genai` sets on its own messages. */
+const GEMINI_MODEL_PROVIDER = 'google-genai';
+
 function toGeminiContents(messages: BaseMessage[]): BaseMessage[] {
-	return dropOrphanedLeadingToolCycle(toGeminiHistory(messages));
+	// `@langchain/google-genai` gives the function calls of a turn their thought signatures
+	const history = rewriteForeignTurns(
+		messages,
+		GEMINI_MODEL_PROVIDER,
+		(turn) => new AIMessage(toTextAndToolCalls(turn)),
+	);
+	return dropOrphanedLeadingToolCycle(history);
 }
 
 /**
  * Adapts a conversation to the things Gemini enforces beyond the generic chat contract:
  *
  * - **Turns of other providers.** A model fallback puts the turns of another model into the
- *   history. They are rewritten into text and tool calls (see {@link toGeminiHistory}).
- *
- * - **Array schemas.** Each array in a function declaration gets an `items` schema (see
- *   {@link completeArrayItems}).
+ *   history. They are rewritten into text and tool calls (see {@link rewriteForeignTurns}).
  *
  * - **Turn order.** Every request is aligned to Gemini's `contents` ordering rules before it
  *   is sent (see {@link dropOrphanedLeadingToolCycle}). This is the provider boundary, so it
@@ -52,25 +57,6 @@ function toGeminiContents(messages: BaseMessage[]): BaseMessage[] {
  *   clear error is thrown instead of leaking the malformed text downstream.
  */
 export class N8nChatGoogleGenerativeAI extends ChatGoogleGenerativeAI {
-	invocationParams(options?: this['ParsedCallOptions']) {
-		const params = super.invocationParams(options);
-		if (!params.tools) return params;
-		return {
-			...params,
-			tools: params.tools.map((tool) =>
-				'functionDeclarations' in tool
-					? {
-							...tool,
-							functionDeclarations: tool.functionDeclarations?.map((declaration) => ({
-								...declaration,
-								parameters: declaration.parameters && completeArrayItems(declaration.parameters),
-							})),
-						}
-					: tool,
-			),
-		};
-	}
-
 	async _generate(
 		messages: BaseMessage[],
 		options: this['ParsedCallOptions'],

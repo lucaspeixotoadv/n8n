@@ -100,3 +100,29 @@ index eb7e4cfd2d41aaceff278d811243c20e048d8a12..4c86d1618b3be504a0cc1446827e6477
  	}
  	_convertToContent(text) {
  		return {
+diff --git a/dist/utils/zod_to_genai_parameters.cjs b/dist/utils/zod_to_genai_parameters.cjs
+index d88e3a9f1425ceaa56c1a6e886e2560181994a5a..a272624c949bef532fb9267c619fbd1e305a057d 100644
+--- a/dist/utils/zod_to_genai_parameters.cjs
++++ b/dist/utils/zod_to_genai_parameters.cjs
+@@ -9,6 +9,8 @@ function removeAdditionalProperties(obj) {
+ 		if ("additionalProperties" in newObj) delete newObj.additionalProperties;
+ 		if ("$schema" in newObj) delete newObj.$schema;
+ 		if ("strict" in newObj) delete newObj.strict;
++		// An array without items accepts any items, the same as items: {}. Gemini requires items.
++		if (newObj.type === "array" && !("items" in newObj)) newObj.items = {};
+ 		for (const key in newObj) if (key in newObj) {
+ 			if (Array.isArray(newObj[key])) newObj[key] = newObj[key].map(removeAdditionalProperties);
+ 			else if (typeof newObj[key] === "object" && newObj[key] !== null) newObj[key] = removeAdditionalProperties(newObj[key]);
+diff --git a/dist/utils/zod_to_genai_parameters.js b/dist/utils/zod_to_genai_parameters.js
+index 7a68c25e2a68a6fe3b3464a071adc450fa99b8b5..6e4baa7882a129774dbf21c6c139da2dd6a0c239 100644
+--- a/dist/utils/zod_to_genai_parameters.js
++++ b/dist/utils/zod_to_genai_parameters.js
+@@ -9,6 +9,8 @@ function removeAdditionalProperties(obj) {
+ 		if ("additionalProperties" in newObj) delete newObj.additionalProperties;
+ 		if ("$schema" in newObj) delete newObj.$schema;
+ 		if ("strict" in newObj) delete newObj.strict;
++		// An array without items accepts any items, the same as items: {}. Gemini requires items.
++		if (newObj.type === "array" && !("items" in newObj)) newObj.items = {};
+ 		for (const key in newObj) if (key in newObj) {
+ 			if (Array.isArray(newObj[key])) newObj[key] = newObj[key].map(removeAdditionalProperties);
+ 			else if (typeof newObj[key] === "object" && newObj[key] !== null) newObj[key] = removeAdditionalProperties(newObj[key]);

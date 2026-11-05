@@ -1,5 +1,5 @@
 import type { GoogleAISafetySetting } from '@langchain/google-common';
-import { ChatVertexAI, type ChatVertexAIInput } from '@langchain/google-vertexai';
+import type { ChatVertexAIInput } from '@langchain/google-vertexai';
 import {
 	makeN8nLlmFailedAttemptHandler,
 	N8nLlmTracing,
@@ -22,6 +22,7 @@ import { MODEL_SELECTION_HINT } from '@utils/model-builder-hints';
 
 import { extractGoogleErrorMessage, makeErrorFromStatus } from './error-handling';
 import { getAdditionalOptions } from '../gemini-common/additional-options';
+import { N8nChatVertexAI } from '../gemini-common/n8n-chat-vertex-ai';
 import { getVertexEndpoint, vertexLocationField } from '../gemini-common/vertex-location';
 
 import {
@@ -217,7 +218,7 @@ export class LmChatGoogleVertex implements INodeType {
 				modelConfig.thinkingBudget = options.thinkingBudget;
 			}
 
-			const model = new ChatVertexAI(modelConfig);
+			const model = new N8nChatVertexAI(modelConfig);
 
 			return {
 				response: model,

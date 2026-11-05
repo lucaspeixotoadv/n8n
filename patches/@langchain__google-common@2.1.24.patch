@@ -26,3 +26,89 @@ index b3f1afa39a53dfb2b4e7020df01e17f54996dacc..111cb0005d210addf190036be9e19159
  				this._throwRequestError(status, body, err?.response ?? { status }, context);
  			}
  			throw fetchError;
+diff --git a/dist/utils/zod_to_gemini_parameters.cjs b/dist/utils/zod_to_gemini_parameters.cjs
+index 3d9258a7ed63cd2883a306faae792eb0c09820e9..f36ae8cfda54e15cdeda0d34a6940f2e9f1e450f 100644
+--- a/dist/utils/zod_to_gemini_parameters.cjs
++++ b/dist/utils/zod_to_gemini_parameters.cjs
+@@ -22,16 +22,19 @@ function removeAdditionalProperties(obj) {
+ 		if ("additionalProperties" in newObj) delete newObj.additionalProperties;
+ 		if ("anyOf" in newObj || "oneOf" in newObj) {
+ 			const unionTypes = newObj.anyOf || newObj.oneOf;
+-			if (Array.isArray(unionTypes) && unionTypes.length === 2) {
+-				const nullIndex = unionTypes.findIndex((t) => t.type === "null");
+-				if (nullIndex >= 0) {
+-					const nonNullType = unionTypes[nullIndex === 0 ? 1 : 0];
+-					delete newObj.anyOf;
+-					delete newObj.oneOf;
+-					for (const key in nonNullType) if (key in nonNullType) newObj[key] = nonNullType[key];
+-					newObj.nullable = true;
+-				} else throw new Error("zod_to_gemini_parameters: Gemini cannot handle union types (discriminatedUnion, anyOf, oneOf). Consider using a flat object structure with optional fields instead.");
+-			} else throw new Error("zod_to_gemini_parameters: Gemini cannot handle union types (discriminatedUnion, anyOf, oneOf). Consider using a flat object structure with optional fields instead.");
++			if (!Array.isArray(unionTypes)) throw new Error("zod_to_gemini_parameters: anyOf and oneOf must be arrays of schemas.");
++			const nullIndex = unionTypes.findIndex((t) => t.type === "null");
++			if (unionTypes.length === 2 && nullIndex >= 0) {
++				const nonNullType = unionTypes[nullIndex === 0 ? 1 : 0];
++				delete newObj.anyOf;
++				delete newObj.oneOf;
++				for (const key in nonNullType) if (key in nonNullType) newObj[key] = nonNullType[key];
++				newObj.nullable = true;
++			} else {
++				// Gemini schemas support anyOf, but not oneOf
++				delete newObj.oneOf;
++				newObj.anyOf = unionTypes;
++			}
+ 		}
+ 		if ("exclusiveMinimum" in newObj && newObj.exclusiveMinimum === 0) {
+ 			newObj.minimum = .01;
+@@ -41,6 +44,8 @@ function removeAdditionalProperties(obj) {
+ 			delete newObj.exclusiveMinimum;
+ 		}
+ 		adjustObjectType(newObj);
++		// An array without items accepts any items, the same as items: {}. Gemini requires items.
++		if (newObj.type === "array" && !("items" in newObj)) newObj.items = {};
+ 		for (const key in newObj) if (key in newObj) {
+ 			if (Array.isArray(newObj[key])) newObj[key] = newObj[key].map(removeAdditionalProperties);
+ 			else if (typeof newObj[key] === "object" && newObj[key] !== null) newObj[key] = removeAdditionalProperties(newObj[key]);
+diff --git a/dist/utils/zod_to_gemini_parameters.js b/dist/utils/zod_to_gemini_parameters.js
+index 622e9a1068c1e4ab934f44c2b72b6383d1bc1c46..2fc5bf6b9b312685d22435fefedaab7e35b3a9fd 100644
+--- a/dist/utils/zod_to_gemini_parameters.js
++++ b/dist/utils/zod_to_gemini_parameters.js
+@@ -22,16 +22,19 @@ function removeAdditionalProperties(obj) {
+ 		if ("additionalProperties" in newObj) delete newObj.additionalProperties;
+ 		if ("anyOf" in newObj || "oneOf" in newObj) {
+ 			const unionTypes = newObj.anyOf || newObj.oneOf;
+-			if (Array.isArray(unionTypes) && unionTypes.length === 2) {
+-				const nullIndex = unionTypes.findIndex((t) => t.type === "null");
+-				if (nullIndex >= 0) {
+-					const nonNullType = unionTypes[nullIndex === 0 ? 1 : 0];
+-					delete newObj.anyOf;
+-					delete newObj.oneOf;
+-					for (const key in nonNullType) if (key in nonNullType) newObj[key] = nonNullType[key];
+-					newObj.nullable = true;
+-				} else throw new Error("zod_to_gemini_parameters: Gemini cannot handle union types (discriminatedUnion, anyOf, oneOf). Consider using a flat object structure with optional fields instead.");
+-			} else throw new Error("zod_to_gemini_parameters: Gemini cannot handle union types (discriminatedUnion, anyOf, oneOf). Consider using a flat object structure with optional fields instead.");
++			if (!Array.isArray(unionTypes)) throw new Error("zod_to_gemini_parameters: anyOf and oneOf must be arrays of schemas.");
++			const nullIndex = unionTypes.findIndex((t) => t.type === "null");
++			if (unionTypes.length === 2 && nullIndex >= 0) {
++				const nonNullType = unionTypes[nullIndex === 0 ? 1 : 0];
++				delete newObj.anyOf;
++				delete newObj.oneOf;
++				for (const key in nonNullType) if (key in nonNullType) newObj[key] = nonNullType[key];
++				newObj.nullable = true;
++			} else {
++				// Gemini schemas support anyOf, but not oneOf
++				delete newObj.oneOf;
++				newObj.anyOf = unionTypes;
++			}
+ 		}
+ 		if ("exclusiveMinimum" in newObj && newObj.exclusiveMinimum === 0) {
+ 			newObj.minimum = .01;
+@@ -41,6 +44,8 @@ function removeAdditionalProperties(obj) {
+ 			delete newObj.exclusiveMinimum;
+ 		}
+ 		adjustObjectType(newObj);
++		// An array without items accepts any items, the same as items: {}. Gemini requires items.
++		if (newObj.type === "array" && !("items" in newObj)) newObj.items = {};
+ 		for (const key in newObj) if (key in newObj) {
+ 			if (Array.isArray(newObj[key])) newObj[key] = newObj[key].map(removeAdditionalProperties);
+ 			else if (typeof newObj[key] === "object" && newObj[key] !== null) newObj[key] = removeAdditionalProperties(newObj[key]);
