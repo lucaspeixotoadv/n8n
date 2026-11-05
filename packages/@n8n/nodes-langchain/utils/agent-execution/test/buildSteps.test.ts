@@ -911,6 +911,8 @@ describe('buildSteps', () => {
 				id: 'call_123',
 				name: 'Calculator',
 			});
+			// The provider mark lets another model translate the Anthropic blocks
+			expect(message.response_metadata).toEqual({ model_provider: 'anthropic' });
 		});
 
 		it('should reconstruct thinking blocks with empty thinking text', () => {
@@ -2003,6 +2005,7 @@ describe('buildSteps', () => {
 			]);
 			// Array content is the Anthropic payload. tool_calls stays empty.
 			expect(sharedMessage.tool_calls).toEqual([]);
+			expect(sharedMessage.response_metadata).toEqual({ model_provider: 'anthropic' });
 
 			expect(result[1].action.messageLog).toEqual([]);
 

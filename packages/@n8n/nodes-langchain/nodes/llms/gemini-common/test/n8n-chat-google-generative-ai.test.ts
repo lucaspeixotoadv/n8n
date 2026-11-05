@@ -1,8 +1,10 @@
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
+import { DynamicStructuredTool } from '@langchain/core/tools';
 import type { ChatResult } from '@langchain/core/outputs';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { OperationalError } from 'n8n-workflow';
 import type { MockInstance } from 'vitest';
+import { z } from 'zod';
 
 import {
 	MAX_MALFORMED_FUNCTION_CALL_ATTEMPTS,
@@ -140,6 +142,108 @@ describe('N8nChatGoogleGenerativeAI', () => {
 			await model._generate(messages, {} as never);
 
 			expect(superGenerateSpy).toHaveBeenCalledWith(messages, expect.anything(), undefined);
+		});
+	});
+
+	describe('history from another provider', () => {
+		// The turn of an Anthropic fallback model, as the agent replays it
+		const anthropicTurn = new AIMessage({
+			content: [
+				{ type: 'thinking', thinking: 'I need the case.', signature: 'anthropic-signature' },
+				{ type: 'text', text: 'Looking up the case.' },
+				{ type: 'tool_use', id: 'toolu_1', name: 'getCase', input: { caseId: '1' } },
+			],
+			response_metadata: { model_provider: 'anthropic' },
+		});
+		const history = [
+			new HumanMessage('Open case 1'),
+			anthropicTurn,
+			new ToolMessage({ content: 'case 1', tool_call_id: 'toolu_1', name: 'getCase' }),
+		];
+
+		async function sendHistory(modelName: string) {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							candidates: [
+								{ content: { role: 'model', parts: [{ text: 'Done' }] }, finishReason: 'STOP' },
+							],
+						}),
+					),
+			);
+			const geminiModel = new N8nChatGoogleGenerativeAI({
+				apiKey: 'test-api-key',
+				model: modelName,
+				fetch: fetchMock,
+			});
+
+			await geminiModel.invoke(history);
+
+			const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			const body = JSON.parse(init.body as string) as {
+				contents: Array<{ role: string; parts: Array<Record<string, unknown>> }>;
+			};
+			return body.contents;
+		}
+
+		it('should send the text and the tool call of the turn, without the reasoning', async () => {
+			const contents = await sendHistory('gemini-2.5-flash');
+
+			expect(contents[1]).toEqual({
+				role: 'model',
+				parts: [
+					{ text: 'Looking up the case.' },
+					{ functionCall: { name: 'getCase', args: { caseId: '1' } } },
+				],
+			});
+			expect(contents[2].parts[0]).toMatchObject({ functionResponse: { name: 'getCase' } });
+		});
+
+		it('should give the tool call a thought signature for a model that requires one', async () => {
+			const contents = await sendHistory('gemini-3-flash-preview');
+
+			expect(contents[1].parts[1]).toEqual({
+				functionCall: { name: 'getCase', args: { caseId: '1' } },
+				thoughtSignature: expect.any(String),
+			});
+		});
+	});
+
+	describe('function declarations', () => {
+		it('should give an items schema to each array of a tool schema', async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							candidates: [
+								{ content: { role: 'model', parts: [{ text: 'Done' }] }, finishReason: 'STOP' },
+							],
+						}),
+					),
+			);
+			const geminiModel = new N8nChatGoogleGenerativeAI({
+				apiKey: 'test-api-key',
+				model: 'gemini-2.5-flash',
+				fetch: fetchMock,
+			});
+			// An object or a list of any values, as the MCP client gets it for a $fromAI json argument
+			const tool = new DynamicStructuredTool({
+				name: 'search',
+				description: 'Search cases',
+				schema: z.object({ types: z.union([z.record(z.any()), z.array(z.any())]) }),
+				func: async () => '',
+			});
+
+			await geminiModel.bindTools([tool]).invoke('Search');
+
+			const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			const body = JSON.parse(init.body as string) as {
+				tools: Array<{ functionDeclarations: Array<{ parameters: unknown }> }>;
+			};
+			expect(body.tools[0].functionDeclarations[0].parameters).toMatchObject({
+				properties: { types: { anyOf: [{ type: 'object' }, { type: 'array', items: {} }] } },
+			});
 		});
 	});
 });

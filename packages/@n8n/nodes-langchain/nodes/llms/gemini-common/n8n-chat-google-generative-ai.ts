@@ -4,6 +4,8 @@ import type { ChatGeneration, ChatGenerationChunk, ChatResult } from '@langchain
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { OperationalError } from 'n8n-workflow';
 
+import { completeArrayItems } from './array-items';
+import { toGeminiHistory } from './foreign-turns';
 import { dropOrphanedLeadingToolCycle } from './turn-order';
 
 const MALFORMED_FUNCTION_CALL_FINISH_REASON = 'MALFORMED_FUNCTION_CALL';
@@ -23,8 +25,18 @@ function getFinishMessage(generation: ChatGeneration | undefined): string | unde
 	return typeof finishMessage === 'string' ? finishMessage : undefined;
 }
 
+function toGeminiContents(messages: BaseMessage[]): BaseMessage[] {
+	return dropOrphanedLeadingToolCycle(toGeminiHistory(messages));
+}
+
 /**
- * Adapts a conversation to the two things Gemini enforces beyond the generic chat contract:
+ * Adapts a conversation to the things Gemini enforces beyond the generic chat contract:
+ *
+ * - **Turns of other providers.** A model fallback puts the turns of another model into the
+ *   history. They are rewritten into text and tool calls (see {@link toGeminiHistory}).
+ *
+ * - **Array schemas.** Each array in a function declaration gets an `items` schema (see
+ *   {@link completeArrayItems}).
  *
  * - **Turn order.** Every request is aligned to Gemini's `contents` ordering rules before it
  *   is sent (see {@link dropOrphanedLeadingToolCycle}). This is the provider boundary, so it
@@ -40,12 +52,31 @@ function getFinishMessage(generation: ChatGeneration | undefined): string | unde
  *   clear error is thrown instead of leaking the malformed text downstream.
  */
 export class N8nChatGoogleGenerativeAI extends ChatGoogleGenerativeAI {
+	invocationParams(options?: this['ParsedCallOptions']) {
+		const params = super.invocationParams(options);
+		if (!params.tools) return params;
+		return {
+			...params,
+			tools: params.tools.map((tool) =>
+				'functionDeclarations' in tool
+					? {
+							...tool,
+							functionDeclarations: tool.functionDeclarations?.map((declaration) => ({
+								...declaration,
+								parameters: declaration.parameters && completeArrayItems(declaration.parameters),
+							})),
+						}
+					: tool,
+			),
+		};
+	}
+
 	async _generate(
 		messages: BaseMessage[],
 		options: this['ParsedCallOptions'],
 		runManager?: CallbackManagerForLLMRun,
 	): Promise<ChatResult> {
-		const contents = dropOrphanedLeadingToolCycle(messages);
+		const contents = toGeminiContents(messages);
 		let malformedGeneration: ChatGeneration | undefined;
 
 		for (let attempt = 1; attempt <= MAX_MALFORMED_FUNCTION_CALL_ATTEMPTS; attempt++) {
@@ -71,6 +102,6 @@ export class N8nChatGoogleGenerativeAI extends ChatGoogleGenerativeAI {
 		options: this['ParsedCallOptions'],
 		runManager?: CallbackManagerForLLMRun,
 	): AsyncGenerator<ChatGenerationChunk> {
-		yield* super._streamResponseChunks(dropOrphanedLeadingToolCycle(messages), options, runManager);
+		yield* super._streamResponseChunks(toGeminiContents(messages), options, runManager);
 	}
 }

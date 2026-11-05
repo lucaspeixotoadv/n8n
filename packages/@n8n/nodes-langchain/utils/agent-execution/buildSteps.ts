@@ -85,6 +85,12 @@ interface AnthropicToolCall {
 }
 
 /**
+ * Marks a message whose content holds Anthropic content blocks. Another model, for
+ * example after a model fallback, translates the blocks by this mark.
+ */
+const ANTHROPIC_MODEL_PROVIDER = 'anthropic';
+
+/**
  * Builds Anthropic-specific content blocks for thinking mode.
  * Creates an array with the thinking block followed by one tool_use block per tool call.
  *
@@ -263,7 +269,9 @@ function buildIndividualAIMessage(
 	return new AIMessage({
 		content: content ?? [],
 		// When content is an array (Anthropic thinking), LangChain ignores tool_calls
-		...(content === null && { tool_calls: [toolCall] }),
+		...(content === null
+			? { tool_calls: [toolCall] }
+			: { response_metadata: { model_provider: ANTHROPIC_MODEL_PROVIDER } }),
 		...(Object.keys(additionalKwargs).length > 0 && { additional_kwargs: additionalKwargs }),
 	});
 }
@@ -364,7 +372,10 @@ function buildSharedAnthropicAIMessage(
 		})),
 	);
 
-	return new AIMessage({ content });
+	return new AIMessage({
+		content,
+		response_metadata: { model_provider: ANTHROPIC_MODEL_PROVIDER },
+	});
 }
 
 /**
