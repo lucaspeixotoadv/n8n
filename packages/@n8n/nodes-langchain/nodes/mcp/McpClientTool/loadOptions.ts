@@ -6,6 +6,7 @@ import {
 	type McpConnectionConfig,
 } from '../shared/runtime';
 import type { McpAuthenticationOption, McpServerTransport } from '../shared/types';
+import type { McpToolIncludeMode } from './types';
 
 function resolveConnectionConfig(ctx: ILoadOptionsFunctions): McpConnectionConfig {
 	const authentication = ctx.getNodeParameter('authentication') as McpAuthenticationOption;
@@ -26,6 +27,17 @@ function resolveConnectionConfig(ctx: ILoadOptionsFunctions): McpConnectionConfi
 
 export async function getTools(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 	return await loadMcpToolOptions(this, resolveConnectionConfig(this));
+}
+
+/** The tools that "Tools to Include" selects, for the fixed arguments. */
+export async function getIncludedTools(
+	this: ILoadOptionsFunctions,
+): Promise<INodePropertyOptions[]> {
+	return await loadMcpToolOptions(this, resolveConnectionConfig(this), {
+		mode: this.getNodeParameter('include') as McpToolIncludeMode,
+		includeTools: this.getNodeParameter('includeTools', []) as string[],
+		excludeTools: this.getNodeParameter('excludeTools', []) as string[],
+	});
 }
 
 export async function getToolArguments(

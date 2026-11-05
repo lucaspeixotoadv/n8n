@@ -78,9 +78,9 @@ describe('assertFixedArgumentsExist', () => {
 		).not.toThrow();
 	});
 
-	it('throws for a tool that the server does not publish', () => {
+	it('throws for a tool that is not one of the tools of the node', () => {
 		expect(() => assertFixedArgumentsExist(node, [createRecord], fixedArguments)).toThrow(
-			'The fixed argument "caseId" is set for the tool "otherTool", which the MCP server does not publish',
+			'The fixed argument "caseId" is set for the tool "otherTool", which is not one of the tools of this node',
 		);
 	});
 

@@ -19,7 +19,7 @@ import type { MockedFunction } from 'vitest';
 import { mock, mockDeep } from 'vitest-mock-extended';
 
 import { McpClientsManager } from '../../shared/McpClientsManager';
-import { getToolArguments, getTools } from '../loadOptions';
+import { getIncludedTools, getToolArguments, getTools } from '../loadOptions';
 import { McpClientTool } from '../McpClientTool.node';
 import { buildMcpToolName } from '../utils';
 
@@ -139,6 +139,35 @@ describe('McpClientTool', () => {
 			);
 
 			expect(closeSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('loadOptions: getIncludedTools', () => {
+		it('should return only the tools selected in "Tools to Include"', async () => {
+			vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+			vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({
+				tools: [
+					{ name: 'MyTool1', inputSchema: { type: 'object' } },
+					{ name: 'MyTool2', inputSchema: { type: 'object' } },
+				],
+			});
+
+			const result = await getIncludedTools.call(
+				mock<ILoadOptionsFunctions>({
+					...egressHelpers<ILoadOptionsFunctions>(),
+					getNode: vi.fn(() => mock<INode>({ typeVersion: 1 })),
+					getNodeParameter: vi.fn((key: string, fallback?: unknown) => {
+						const parameters: Record<string, unknown> = {
+							authentication: 'none',
+							include: 'selected',
+							includeTools: ['MyTool2'],
+						};
+						return (parameters[key] ?? fallback) as never;
+					}),
+				}),
+			);
+
+			expect(result.map(({ value }) => value)).toEqual(['MyTool2']);
 		});
 	});
 

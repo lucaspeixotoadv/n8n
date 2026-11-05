@@ -44,8 +44,8 @@ export function hideFixedArguments(tool: McpTool, toolArguments: IDataObject): M
 }
 
 /**
- * Throws when a fixed argument names a tool or an argument that the MCP server
- * does not publish, so a value never goes to an argument that does not exist.
+ * Throws when a fixed argument names a tool that the node does not use, or an
+ * argument that the tool does not publish, so a value never goes nowhere.
  */
 export function assertFixedArgumentsExist(
 	node: INode,
@@ -57,7 +57,7 @@ export function assertFixedArgumentsExist(
 		if (!tool) {
 			throw new NodeOperationError(
 				node,
-				`The fixed argument "${argument}" is set for the tool "${toolName}", which the MCP server does not publish`,
+				`The fixed argument "${argument}" is set for the tool "${toolName}", which is not one of the tools of this node`,
 			);
 		}
 		if (!(argument in (tool.inputSchema.properties ?? {}))) {

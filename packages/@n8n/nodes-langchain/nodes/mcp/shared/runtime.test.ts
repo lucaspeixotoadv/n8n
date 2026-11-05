@@ -334,6 +334,25 @@ describe('runtime', () => {
 			expect(client.close).toHaveBeenCalled();
 		});
 
+		it('throws when a fixed argument is set for a tool that the tool filter leaves out', async () => {
+			const client = mock<Client>();
+			vi.spyOn(utils, 'connectMcpClientForCredential').mockResolvedValue({
+				ok: true,
+				result: client,
+			});
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool, sampleTool]);
+
+			await expect(
+				buildMcpToolkit(createSupplyDataCtx(), 0, {
+					...fixedCaseIdConfig,
+					toolFilter: { mode: 'selected', includeTools: ['search'], excludeTools: [] },
+				}),
+			).rejects.toThrow(
+				'The fixed argument "caseId" is set for the tool "createRecord", which is not one of the tools of this node',
+			);
+			expect(client.close).toHaveBeenCalled();
+		});
+
 		it('exposes the registry attribution as tool metadata and leaves the result alone', async () => {
 			const tools = await buildRegistryTools('Powered by Genie');
 
@@ -744,6 +763,26 @@ describe('runtime', () => {
 					inputSchema: sampleTool.inputSchema,
 				},
 			]);
+		});
+
+		it('returns only the tools that the tool filter selects', async () => {
+			vi.spyOn(utils, 'connectMcpClientForCredential').mockResolvedValue({
+				ok: true,
+				result: mock<Client>(),
+			});
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([recordTool, sampleTool]);
+			const ctx = mock<ILoadOptionsFunctions>({
+				getNode: vi.fn(() => mock<INode>({ typeVersion: 1, name: 'MCP' })),
+				...egressHelpers<ILoadOptionsFunctions>(),
+			});
+
+			const result = await loadMcpToolOptions(ctx, baseConnectionConfig, {
+				mode: 'except',
+				includeTools: [],
+				excludeTools: ['search'],
+			});
+
+			expect(result.map(({ value }) => value)).toEqual(['createRecord']);
 		});
 
 		it('throws NodeOperationError when connect fails', async () => {

@@ -107,13 +107,13 @@ async function connectAndGetTools(
 
 	try {
 		const allTools = await getAllTools(client.result);
-		assertFixedArgumentsExist(ctx.getNode(), allTools, config.fixedArguments);
 		const mcpTools = getSelectedTools({
 			tools: allTools,
 			mode: config.toolFilter.mode,
 			includeTools: config.toolFilter.includeTools,
 			excludeTools: config.toolFilter.excludeTools,
 		});
+		assertFixedArgumentsExist(ctx.getNode(), mcpTools, config.fixedArguments);
 		return { client: client.result, mcpTools, error: null };
 	} catch (error) {
 		await client.result.close();
@@ -427,12 +427,15 @@ async function listMcpTools(
  * Connect to an MCP server and return its tool list as `INodePropertyOptions[]`
  * for use in a `loadOptionsMethod` dropdown. Both the parameter-driven and
  * registry-driven nodes call this — they only differ in how `config` is built.
+ * With a `toolFilter`, only the tools the filter selects are returned.
  */
 export async function loadMcpToolOptions(
 	ctx: ILoadOptionsFunctions,
 	config: McpConnectionConfig,
+	toolFilter?: ResolvedMcpConfig['toolFilter'],
 ): Promise<INodePropertyOptions[]> {
-	const tools = await listMcpTools(ctx, config);
+	const allTools = await listMcpTools(ctx, config);
+	const tools = toolFilter ? getSelectedTools({ tools: allTools, ...toolFilter }) : allTools;
 	return tools.map((tool) => ({
 		name: tool.name,
 		value: tool.name,

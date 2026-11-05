@@ -9,7 +9,7 @@ import {
 	type SupplyData,
 } from 'n8n-workflow';
 
-import { getToolArguments, getTools } from './loadOptions';
+import { getIncludedTools, getToolArguments, getTools } from './loadOptions';
 import type { McpToolIncludeMode } from './types';
 import { credentials, transportSelect } from '../shared/descriptions';
 import type { McpFixedArgument } from '../shared/fixed-arguments';
@@ -285,8 +285,14 @@ export class McpClientTool implements INodeType {
 								description:
 									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 								typeOptions: {
-									loadOptionsMethod: 'getTools',
-									loadOptionsDependsOn: ['sseEndpoint', 'endpointUrl'],
+									loadOptionsMethod: 'getIncludedTools',
+									loadOptionsDependsOn: [
+										'sseEndpoint',
+										'endpointUrl',
+										'include',
+										'includeTools',
+										'excludeTools',
+									],
 								},
 							},
 							{
@@ -339,6 +345,7 @@ export class McpClientTool implements INodeType {
 	methods = {
 		loadOptions: {
 			getTools,
+			getIncludedTools,
 			getToolArguments,
 		},
 	};
