@@ -1413,6 +1413,15 @@ export type RunOnceForEachItemFn = <T = unknown>(
 // =============================================================================
 
 /**
- * Valid types for $fromAI parameter values
+ * Valid types for $fromAI parameter values. An array type is the item type followed by `[]`.
  */
-export type FromAIArgumentType = 'string' | 'number' | 'boolean' | 'json';
+export type FromAIArgumentType =
+	| 'string'
+	| 'number'
+	| 'boolean'
+	| 'object'
+	| 'string[]'
+	| 'number[]'
+	| 'boolean[]'
+	| 'object[]'
+	| 'json';

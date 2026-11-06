@@ -304,7 +304,7 @@ export const ROOT_DOLLAR_COMPLETIONS: Completion[] = [
 					{
 						name: 'type',
 						description: 'Type of the argument',
-						type: 'string | number | boolean | json',
+						type: 'string | number | boolean | object | string[] | number[] | boolean[] | object[] | json',
 						optional: true,
 					},
 					{
@@ -326,6 +326,11 @@ export const ROOT_DOLLAR_COMPLETIONS: Completion[] = [
 					{
 						example: '$fromAI("isStudent", "Is the person a student", "boolean", false)',
 						description: 'Get the student status of the person as boolean with default value false',
+					},
+					{
+						example: '$fromAI("tags", "The tags of the person", "string[]", [])',
+						description:
+							'Get the tags of the person as a list of strings with an empty default list',
 					},
 				],
 			},

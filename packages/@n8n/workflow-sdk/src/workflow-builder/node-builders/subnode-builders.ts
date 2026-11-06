@@ -524,7 +524,8 @@ export type EmbeddingsFn = EmbeddingFn;
  *
  * @param key - Unique identifier for the parameter
  * @param description - Optional description to help the AI understand what value to provide
- * @param type - Expected value type: 'string' (default), 'number', 'boolean', 'json'
+ * @param type - Expected value type: 'string' (default), 'number', 'boolean', 'object',
+ *   an array type such as 'string[]' or 'object[]', or 'json' (an object or an array)
  * @param defaultValue - Optional fallback value if AI doesn't provide one
  * @returns A $fromAI expression string
  */

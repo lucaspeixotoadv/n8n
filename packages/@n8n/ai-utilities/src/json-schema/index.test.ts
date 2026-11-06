@@ -39,6 +39,28 @@ describe('zodToDraft202012', () => {
 		expect(result.required).toEqual(['dados']);
 	});
 
+	it('gives each $fromAI object and array argument one type, and each array an item type', () => {
+		const args = extractFromAICalls(
+			'$fromAI("details", "Details", "object") $fromAI("types", "Types", "string[]", []) ' +
+				'$fromAI("amounts", "Amounts", "number[]") $fromAI("flags", "Flags", "boolean[]") ' +
+				'$fromAI("parties", "Parties", "object[]")',
+		);
+		const result = zodToDraft202012(
+			z.object(Object.fromEntries(args.map((arg) => [arg.key, generateZodSchema(arg)]))),
+			{ removeAdditionalStrategy: 'strict' },
+		);
+
+		expect(result.properties).toMatchObject({
+			details: { type: 'object', description: 'Details' },
+			types: { type: 'array', items: { type: 'string' }, default: [] },
+			amounts: { type: 'array', items: { type: 'number' } },
+			flags: { type: 'array', items: { type: 'boolean' } },
+			parties: { type: 'array', items: { type: 'object' } },
+		});
+		expect(keywordsIn(result.properties)).not.toContain('anyOf');
+		expect(result.required).toEqual(['details', 'amounts', 'flags', 'parties']);
+	});
+
 	it('declares 2020-12 rather than draft-07', () => {
 		const result = zodToDraft202012(z.object({ a: z.string() }));
 

@@ -68,6 +68,26 @@ export function useToolParameters({ node }: GetToolParametersProps) {
 			inputType: 'text',
 			defaultValue: '',
 		},
+		['object']: {
+			inputType: 'text',
+			defaultValue: '',
+		},
+		['string[]']: {
+			inputType: 'text',
+			defaultValue: '',
+		},
+		['number[]']: {
+			inputType: 'text',
+			defaultValue: '',
+		},
+		['boolean[]']: {
+			inputType: 'text',
+			defaultValue: '',
+		},
+		['object[]']: {
+			inputType: 'text',
+			defaultValue: '',
+		},
 	};
 
 	const getToolName = (toolNode: INode | string) => {

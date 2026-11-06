@@ -37,6 +37,17 @@ describe('extractFromAICalls', () => {
 		['{{ $fromAI("a", "b", "String", "{}") }}', ['a', 'b', 'string', '{}']],
 		['{{ $fromAI("a", "b", "Number", "5") }}', ['a', 'b', 'number', 5]],
 		['{{ $fromAI("a", "b", "Boolean", "true") }}', ['a', 'b', 'boolean', true]],
+		[
+			'{{ $fromAI("a", "b", "object", {"x": 1, "y": [2, 3]}) }}',
+			['a', 'b', 'object', { x: 1, y: [2, 3] }],
+		],
+		['{{ $fromAI("a", "b", "json", {"x": 1, "y": 2}) }}', ['a', 'b', 'json', { x: 1, y: 2 }]],
+		['{{ $fromAI("a", "b", "string[]", ["c", "d"]) }}', ['a', 'b', 'string[]', ['c', 'd']]],
+		['{{ $fromAI("a", "b, [c", "string[]", ["d, ]"]) }}', ['a', 'b, [c', 'string[]', ['d, ]']]],
+		['{{ $fromAI("a", "b", "string[]", []) }}', ['a', 'b', 'string[]', []]],
+		['{{ $fromAI("a", "b", "number[]", [1, 2]) }}', ['a', 'b', 'number[]', [1, 2]]],
+		['{{ $fromAI("a", "b", "Boolean[]") }}', ['a', 'b', 'boolean[]', undefined]],
+		['{{ $fromAI("a", "b", "object[]") }}', ['a', 'b', 'object[]', undefined]],
 	])('should parse args as expected for %s', (formula, [key, description, type, defaultValue]) => {
 		expect(extractFromAICalls(formula)).toEqual([
 			{
@@ -50,6 +61,8 @@ describe('extractFromAICalls', () => {
 
 	test.each([
 		['$fromAI("a", "b", "c")'],
+		['$fromAI("a", "b", "json[]")'],
+		['$fromAI("a", "b", "string[][]")'],
 		['$fromAI("a", "b", "string"'],
 		['$fromAI("a", "b", "string, "d")'],
 	])('should throw as expected for %s', (formula) => {
@@ -209,6 +222,43 @@ describe('JSON Type Parsing via generateZodSchema', () => {
 		// When a new valid value is provided, the schema should use it.
 		const newValue = { newKey: 'newValue' };
 		expect(schema.parse(newValue)).toEqual(newValue);
+	});
+});
+
+describe('Object and array types via generateZodSchema', () => {
+	const schemaFor = (type: string) =>
+		generateZodSchema(extractFromAICalls(`$fromAI("arg", "Argument", "${type}")`)[0]);
+
+	it('should accept an object and reject an array or a primitive for an object parameter', () => {
+		const schema = schemaFor('object');
+
+		expect(schema.parse({ id: '1' })).toEqual({ id: '1' });
+		expect(schema.parse({})).toEqual({});
+		expect(() => schema.parse([{ id: '1' }])).toThrowError();
+		expect(() => schema.parse('{"id": "1"}')).toThrowError();
+	});
+
+	test.each([
+		['string[]', ['deadline', 'task'], [1]],
+		['number[]', [1, 2.5], ['1']],
+		['boolean[]', [true, false], ['true']],
+		['object[]', [{ id: '1', name: 'Acme' }], ['1']],
+	])(
+		'should accept the items of the type and reject other items for %s',
+		(type, valid, invalid) => {
+			const schema = schemaFor(type);
+
+			expect(schema.parse(valid)).toEqual(valid);
+			expect(schema.parse([])).toEqual([]);
+			expect(() => schema.parse(invalid)).toThrowError();
+			expect(() => schema.parse(valid[0])).toThrowError();
+		},
+	);
+
+	it('should use the default value of an array parameter when no value is given', () => {
+		const [arg] = extractFromAICalls('$fromAI("types", "Record types", "string[]", ["task"])');
+
+		expect(generateZodSchema(arg).parse(undefined)).toEqual(['task']);
 	});
 });
 

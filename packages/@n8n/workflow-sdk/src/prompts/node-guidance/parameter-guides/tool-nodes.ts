@@ -18,7 +18,7 @@ Tool nodes (nodes ending with "Tool" like Gmail Tool, Google Calendar Tool, etc.
 ### Parameters
 - key: Unique identifier (1-64 chars, alphanumeric/underscore/hyphen)
 - description: Optional description for the AI (use empty string '' if not needed)
-- type: 'string' | 'number' | 'boolean' | 'json' (defaults to 'string')
+- type: 'string' | 'number' | 'boolean' | 'object' | 'string[]' | 'number[]' | 'boolean[]' | 'object[]' | 'json' (defaults to 'string'). Prefer an object or an array type over 'json', which accepts an object or an array
 - defaultValue: Optional fallback value
 
 ### Tool Node Examples

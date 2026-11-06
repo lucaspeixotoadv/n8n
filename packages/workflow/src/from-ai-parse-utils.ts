@@ -9,7 +9,20 @@ import { jsonParse } from './utils';
  * This file contains the logic for parsing node parameters and extracting $fromAI calls
  */
 
-export type FromAIArgumentType = 'string' | 'number' | 'boolean' | 'json';
+/** The types of an argument. An array type is the item type followed by `[]`. */
+const FROM_AI_ARGUMENT_TYPES = [
+	'string',
+	'number',
+	'boolean',
+	'object',
+	'string[]',
+	'number[]',
+	'boolean[]',
+	'object[]',
+	'json',
+] as const;
+export type FromAIArgumentType = (typeof FROM_AI_ARGUMENT_TYPES)[number];
+
 export type FromAIArgument = {
 	key: string;
 	description?: string;
@@ -57,6 +70,21 @@ export function generateZodSchema(placeholder: FromAIArgument): z.ZodTypeAny {
 		case 'boolean':
 			schema = z.boolean();
 			break;
+		case 'object':
+			schema = z.record(z.unknown());
+			break;
+		case 'string[]':
+			schema = z.array(z.string());
+			break;
+		case 'number[]':
+			schema = z.array(z.number());
+			break;
+		case 'boolean[]':
+			schema = z.array(z.boolean());
+			break;
+		case 'object[]':
+			schema = z.array(z.record(z.unknown()));
+			break;
 		case 'json':
 			// An argument with a declared default is optional, so an empty value is valid for it.
 			schema = generateJsonSchema({ allowEmpty: placeholder.defaultValue !== undefined });
@@ -77,7 +105,7 @@ export function generateZodSchema(placeholder: FromAIArgument): z.ZodTypeAny {
 }
 
 function isFromAIArgumentType(value: string): value is FromAIArgumentType {
-	return ['string', 'number', 'boolean', 'json'].includes(value.toLowerCase());
+	return FROM_AI_ARGUMENT_TYPES.some((type) => type === value.toLowerCase());
 }
 
 /**
@@ -101,7 +129,7 @@ function parseDefaultValue(
 		return lowerValue === 'true';
 	if (type === 'number' && !isNaN(Number(value))) return Number(value);
 
-	// For type 'json' or any other case, attempt to parse as JSON
+	// For an object, an array or a json type, or any other case, attempt to parse as JSON
 	try {
 		return jsonParse(value);
 	} catch {
@@ -121,6 +149,8 @@ function parseArguments(argsString: string): FromAIArgument {
 	let inQuotes = false;
 	let quoteChar = '';
 	let escapeNext = false;
+	// A default value can be an array or an object literal, whose commas do not separate arguments
+	let nestingDepth = 0;
 
 	for (let i = 0; i < argsString.length; i++) {
 		const char = argsString[i];
@@ -151,7 +181,12 @@ function parseArguments(argsString: string): FromAIArgument {
 			continue;
 		}
 
-		if (char === ',' && !inQuotes) {
+		if (!inQuotes) {
+			if (char === '[' || char === '{') nestingDepth++;
+			if (char === ']' || char === '}') nestingDepth--;
+		}
+
+		if (char === ',' && !inQuotes && nestingDepth === 0) {
 			args.push(currentArg.trim());
 			currentArg = '';
 			continue;
