@@ -64,7 +64,7 @@ export class InboundAuthCoreModule implements ModuleInterface {
 			});
 
 			// Ships dark. Set `N8N_ENV_FEAT_TRUSTED_SOURCES_API_ENABLED=true` on a main instance to register
-			// the `/trusted-sources` management routes; the license gates only create and update.
+			// the `/trusted-sources` management routes.
 			if (isEnvFeatureEnabled('N8N_ENV_FEAT_TRUSTED_SOURCES_API_ENABLED')) {
 				await import('./trusted-source.controller.js');
 			}
