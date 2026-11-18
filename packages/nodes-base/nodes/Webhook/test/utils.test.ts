@@ -11,7 +11,7 @@ import {
 	type ICredentialDataDecryptedObject,
 } from 'n8n-workflow';
 
-import type { WebhookParameters } from '../utils';
+import type { JwtClaimChecks, WebhookParameters } from '../utils';
 import {
 	checkRequestGates,
 	checkResponseModeConfiguration,
@@ -861,6 +861,142 @@ describe('Webhook Utils', () => {
 				authPropertyName,
 			);
 			expect(result).toEqual(decodedPayload);
+		});
+
+		describe('JWT claim checks', () => {
+			const secret = 'claim-check-secret';
+			const audience = 'https://n8n.example.com/mcp/abc';
+			const issuer = 'https://issuer.example.com';
+
+			const sign = async (payload: Record<string, unknown>) => {
+				const actual = await vi.importActual<typeof import('jsonwebtoken')>('jsonwebtoken');
+				return actual.sign(payload, secret, { algorithm: 'HS256' });
+			};
+
+			const validate = async (token: string, checks?: JwtClaimChecks) => {
+				const actual = await vi.importActual<typeof import('jsonwebtoken')>('jsonwebtoken');
+				(jwt.verify as Mock).mockImplementationOnce(actual.verify);
+				const headers = { authorization: `Bearer ${token}` };
+				const ctx: Partial<IWebhookFunctions> = {
+					getNodeParameter: vi.fn().mockReturnValue('jwtAuth'),
+					getCredentials: vi.fn().mockResolvedValue({
+						keyType: 'passphrase',
+						publicKey: '',
+						secret,
+						algorithm: 'HS256',
+					}),
+					getRequestObject: vi.fn().mockReturnValue({ headers }),
+					getHeaderData: vi.fn().mockReturnValue(headers),
+				};
+				return await validateWebhookAuthentication(
+					ctx as IWebhookFunctions,
+					'authentication',
+					checks,
+				);
+			};
+
+			it('passes the claim checks to the verification', async () => {
+				const checks = { audience, issuer, maxAge: 60 };
+				(jwt.verify as Mock).mockReturnValueOnce({ sub: '1' });
+				const headers = { authorization: 'Bearer some.jwt.token' };
+				const ctx: Partial<IWebhookFunctions> = {
+					getNodeParameter: vi.fn().mockReturnValue('jwtAuth'),
+					getCredentials: vi.fn().mockResolvedValue({
+						keyType: 'passphrase',
+						publicKey: '',
+						secret,
+						algorithm: 'HS256',
+					}),
+					getRequestObject: vi.fn().mockReturnValue({ headers }),
+					getHeaderData: vi.fn().mockReturnValue(headers),
+				};
+
+				await validateWebhookAuthentication(ctx as IWebhookFunctions, 'authentication', checks);
+
+				expect(jwt.verify).toHaveBeenLastCalledWith('some.jwt.token', secret, {
+					algorithms: ['HS256'],
+					...checks,
+				});
+			});
+
+			it('verifies with the algorithm only when no claim checks are given', async () => {
+				(jwt.verify as Mock).mockReturnValueOnce({ sub: '1' });
+				const headers = { authorization: 'Bearer some.jwt.token' };
+				const ctx: Partial<IWebhookFunctions> = {
+					getNodeParameter: vi.fn().mockReturnValue('jwtAuth'),
+					getCredentials: vi.fn().mockResolvedValue({
+						keyType: 'passphrase',
+						publicKey: '',
+						secret,
+						algorithm: 'HS256',
+					}),
+					getRequestObject: vi.fn().mockReturnValue({ headers }),
+					getHeaderData: vi.fn().mockReturnValue(headers),
+				};
+
+				await validateWebhookAuthentication(ctx as IWebhookFunctions, 'authentication');
+
+				expect(jwt.verify).toHaveBeenLastCalledWith('some.jwt.token', secret, {
+					algorithms: ['HS256'],
+				});
+			});
+
+			it('accepts a token that matches the audience and the issuer', async () => {
+				const token = await sign({ aud: audience, iss: issuer });
+
+				const payload = await validate(token, { audience, issuer });
+
+				expect(payload).toMatchObject({ aud: audience, iss: issuer });
+			});
+
+			it('refuses a token for another audience', async () => {
+				const token = await sign({ aud: 'https://n8n.example.com/mcp/other' });
+
+				await expect(validate(token, { audience })).rejects.toMatchObject({
+					responseCode: 403,
+					message: expect.stringContaining('audience invalid'),
+				});
+			});
+
+			it('refuses a token from another issuer', async () => {
+				const token = await sign({ iss: 'https://other.example.com' });
+
+				await expect(validate(token, { issuer })).rejects.toMatchObject({
+					responseCode: 403,
+					message: expect.stringContaining('issuer invalid'),
+				});
+			});
+
+			it('refuses a token that is older than the maximum age', async () => {
+				const token = await sign({ iat: Math.floor(Date.now() / 1000) - 3600 });
+
+				await expect(validate(token, { maxAge: 60 })).rejects.toMatchObject({
+					responseCode: 403,
+					message: expect.stringContaining('maxAge exceeded'),
+				});
+			});
+
+			it('accepts a token that is younger than the maximum age', async () => {
+				const token = await sign({});
+
+				await expect(validate(token, { maxAge: 60 })).resolves.toHaveProperty('iat');
+			});
+
+			it('refuses a token without iat when a maximum age is set', async () => {
+				const actual = await vi.importActual<typeof import('jsonwebtoken')>('jsonwebtoken');
+				const noIat = actual.sign({ sub: '1' }, secret, { algorithm: 'HS256', noTimestamp: true });
+
+				await expect(validate(noIat, { maxAge: 60 })).rejects.toMatchObject({
+					responseCode: 403,
+					message: expect.stringContaining('iat required'),
+				});
+			});
+
+			it('does not check the claims when no claim checks are given', async () => {
+				const token = await sign({ aud: 'anything', iss: 'anyone' });
+
+				await expect(validate(token)).resolves.toMatchObject({ aud: 'anything', iss: 'anyone' });
+			});
 		});
 
 		describe('records the headers it authenticated with', () => {

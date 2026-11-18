@@ -1,5 +1,8 @@
 import { WebhookAuthorizationError } from 'n8n-nodes-base/dist/nodes/Webhook/error';
-import { validateWebhookAuthentication } from 'n8n-nodes-base/dist/nodes/Webhook/utils';
+import {
+	validateWebhookAuthentication,
+	type JwtClaimChecks,
+} from 'n8n-nodes-base/dist/nodes/Webhook/utils';
 import {
 	DEFAULT_TRUSTED_SOURCE_ID,
 	listBearerTrustedSources,
@@ -60,6 +63,33 @@ async function getConnectedToolsRespectingCredentialGate(
 		);
 		return { tools: [createCredentialGateTool(gateResult)], gateResult };
 	}
+}
+
+/**
+ * Reads the claim checks for JWT authentication from the node parameters.
+ * The audience is the URL this request was served at, so a token for another
+ * endpoint (or for the test URL in production) is refused.
+ */
+function getJwtClaimChecks(context: IWebhookFunctions, webhookName: string): JwtClaimChecks {
+	const checks: JwtClaimChecks = {};
+
+	const issuer = String(context.getNodeParameter('jwtIssuer', '') ?? '').trim();
+	if (issuer) checks.issuer = issuer;
+
+	if (context.getNodeParameter('jwtCheckAudience', true) !== false) {
+		const audience = context.getWebhookResourceUrl(webhookName === 'setup' ? 'setup' : 'default');
+		if (!audience) {
+			// The trigger answers this error with the response code, as for any other failed authentication
+			// eslint-disable-next-line n8n-nodes-base/node-execute-block-wrong-error-thrown
+			throw new WebhookAuthorizationError(500, 'The URL of this MCP server is not available');
+		}
+		checks.audience = audience;
+	}
+
+	const maxAge = Number(context.getNodeParameter('jwtMaxAge', 0));
+	if (maxAge > 0) checks.maxAge = maxAge;
+
+	return checks;
 }
 
 const MCP_SSE_SETUP_PATH = 'sse';
@@ -135,12 +165,23 @@ export class McpTrigger extends Node {
 					},
 				},
 			},
+			{
+				name: 'jwtAuth',
+				required: true,
+				displayOptions: {
+					show: {
+						authentication: ['jwtAuth'],
+					},
+				},
+			},
 		],
 		properties: [
 			{
 				displayName: 'Authentication',
 				name: 'authentication',
 				type: 'options',
+				// The existing order stays, so that the list does not change for current users
+				// eslint-disable-next-line n8n-nodes-base/node-param-options-type-unsorted-items
 				options: [
 					{ name: 'None', value: 'none' },
 					{
@@ -153,6 +194,13 @@ export class McpTrigger extends Node {
 					},
 					{ name: 'Bearer Auth', value: 'bearerAuth' },
 					{ name: 'Header Auth', value: 'headerAuth' },
+					{
+						name: 'JWT Auth',
+						value: 'jwtAuth',
+						description: 'Require a signed JWT in the Authorization header',
+						// The verified payload reaches the tools only when the request is exposed (2.1+)
+						displayOptions: { show: { '@version': [{ _cnd: { gte: 2.1 } }] } },
+					},
 				],
 				default: 'none',
 				description: 'The way to authenticate',
@@ -195,6 +243,34 @@ export class McpTrigger extends Node {
 				},
 				description:
 					"Whether to include the calling user's ID, email and name in the trigger output and in the request the connected tools receive",
+			},
+			{
+				displayName: 'Issuer',
+				name: 'jwtIssuer',
+				type: 'string',
+				default: '',
+				displayOptions: { show: { authentication: ['jwtAuth'] } },
+				description:
+					'The value the "iss" claim of the token must have. Leave empty to not check the issuer.',
+			},
+			{
+				displayName: 'Check Audience',
+				name: 'jwtCheckAudience',
+				type: 'boolean',
+				default: true,
+				displayOptions: { show: { authentication: ['jwtAuth'] } },
+				description:
+					'Whether the "aud" claim of the token must be the exact URL of this MCP server. In a test run it is the test URL, in production it is the production URL.',
+			},
+			{
+				displayName: 'Maximum Token Age (Seconds)',
+				name: 'jwtMaxAge',
+				type: 'number',
+				typeOptions: { minValue: 0 },
+				default: 0,
+				displayOptions: { show: { authentication: ['jwtAuth'] } },
+				description:
+					'The longest time in seconds since the "iat" claim that n8n accepts a token. The token must have an "iat" claim. Set to 0 to not limit the age.',
 			},
 			{
 				displayName: 'Path',
@@ -261,8 +337,10 @@ export class McpTrigger extends Node {
 		const resp = context.getResponseObject() as unknown as CompressionResponse;
 
 		let authedUser: IUser | undefined;
+		let jwtPayload: IDataObject | undefined;
+		const authentication = context.getNodeParameter('authentication');
 
-		if (context.getNodeParameter('authentication') === 'n8nOAuth2') {
+		if (authentication === 'n8nOAuth2') {
 			if (context.getNode().typeVersion < 2) {
 				resp.writeHead(401);
 				resp.end('OAuth2 authentication requires mcp trigger node v2.0 or higher');
@@ -280,7 +358,11 @@ export class McpTrigger extends Node {
 			authedUser = authResult.user;
 		} else {
 			try {
-				await validateWebhookAuthentication(context, 'authentication');
+				jwtPayload = await validateWebhookAuthentication(
+					context,
+					'authentication',
+					authentication === 'jwtAuth' ? getJwtClaimChecks(context, webhookName) : undefined,
+				);
 			} catch (error) {
 				if (error instanceof WebhookAuthorizationError) {
 					resp.writeHead(error.responseCode);
@@ -308,7 +390,12 @@ export class McpTrigger extends Node {
 				: undefined;
 		const exposesRequest = node.typeVersion >= 2.1;
 		const toolInput: IDataObject | undefined = exposesRequest
-			? { body: context.getBodyData(), headers, ...(user && { user }) }
+			? {
+					body: context.getBodyData(),
+					headers,
+					...(user && { user }),
+					...(jwtPayload && { jwtPayload }),
+				}
 			: undefined;
 
 		const serverName = node.typeVersion > 1 ? nodeNameToToolName(node) : 'n8n-mcp-server';
@@ -371,7 +458,11 @@ export class McpTrigger extends Node {
 						const workflowData = {
 							...(toolCallInfo && { mcpToolCall: toolCallInfo }),
 							...(messageId && { mcpMessageId: messageId }),
-							...(exposesRequest && { headers, ...(user && { user }) }),
+							...(exposesRequest && {
+								headers,
+								...(user && { user }),
+								...(jwtPayload && { jwtPayload }),
+							}),
 						};
 						return {
 							noWebhookResponse: true,

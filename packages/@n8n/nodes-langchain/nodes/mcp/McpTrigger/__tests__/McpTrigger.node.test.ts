@@ -6,7 +6,10 @@ import type {
 	IWebhookFunctions,
 	ICredentialDataDecryptedObject,
 } from 'n8n-workflow';
+import jwt from 'jsonwebtoken';
+import type { SignOptions } from 'jsonwebtoken';
 import { recordConsumedAuth, REDACTED } from 'n8n-workflow';
+import { createHmac, generateKeyPairSync } from 'node:crypto';
 import type { Mock, Mocked } from 'vitest';
 import { mock } from 'vitest-mock-extended';
 
@@ -110,7 +113,7 @@ describe('McpTrigger', () => {
 			expect(authParam).toBeDefined();
 			expect(authParam?.type).toBe('options');
 			expect(authParam?.default).toBe('none');
-			expect(authParam?.options).toHaveLength(4);
+			expect(authParam?.options).toHaveLength(5);
 			expect(authParam?.builderHint).toEqual({
 				propertyHint: INBOUND_TRIGGER_AUTHENTICATION_BUILDER_HINT,
 			});
@@ -123,6 +126,32 @@ describe('McpTrigger', () => {
 
 			expect(oauthOption).toBeDefined();
 			expect(oauthOption?.displayOptions).toEqual({ show: { '@version': [{ _cnd: { gte: 2 } }] } });
+		});
+
+		it('should gate the jwtAuth option and its credential to the versions that expose the request', () => {
+			const authParam = mcpTrigger.description.properties?.find((p) => p.name === 'authentication');
+			const options = authParam?.options as INodePropertyOptions[];
+			const jwtOption = options.find((o) => o.value === 'jwtAuth');
+
+			expect(jwtOption?.displayOptions).toEqual({
+				show: { '@version': [{ _cnd: { gte: 2.1 } }] },
+			});
+			expect(mcpTrigger.description.credentials).toContainEqual({
+				name: 'jwtAuth',
+				required: true,
+				displayOptions: { show: { authentication: ['jwtAuth'] } },
+			});
+		});
+
+		it('should show the JWT claim parameters only for jwtAuth', () => {
+			const names = ['jwtIssuer', 'jwtCheckAudience', 'jwtMaxAge'];
+			const params = mcpTrigger.description.properties?.filter((p) => names.includes(p.name));
+
+			expect(params).toHaveLength(3);
+			for (const param of params ?? []) {
+				expect(param.displayOptions).toEqual({ show: { authentication: ['jwtAuth'] } });
+			}
+			expect(params?.find((p) => p.name === 'jwtCheckAudience')?.default).toBe(true);
 		});
 
 		it('should define webhook endpoints', () => {
@@ -710,6 +739,237 @@ describe('McpTrigger', () => {
 				user: OAUTH_USER,
 			});
 			expect(result.toolInput).toMatchObject({ user: OAUTH_USER });
+		});
+	});
+
+	describe('jwtAuth authentication', () => {
+		const MCP_URL = 'https://n8n.example.com/mcp/abc';
+		const ISSUER = 'https://issuer.example.com';
+
+		const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+		const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
+		const nowSeconds = () => Math.floor(Date.now() / 1000);
+		const signEs256 = (claims: Record<string, unknown> = {}, options: SignOptions = {}): string =>
+			jwt.sign({ aud: MCP_URL, iss: ISSUER, ...claims }, privateKey, {
+				algorithm: 'ES256',
+				...options,
+			});
+		const base64Url = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
+		const unsigned = (header: object, payload: object) =>
+			`${base64Url(header)}.${base64Url(payload)}`;
+
+		const setup = (opts: {
+			token?: string;
+			typeVersion?: number;
+			authentication?: string;
+			params?: Record<string, unknown>;
+		}) => {
+			const { token, typeVersion = 2.1, authentication = 'jwtAuth', params = {} } = opts;
+			const headers: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {};
+			const req = createMockRequest({ path: '/mcp/abc', headers });
+			const resp = createMockResponse();
+
+			const parameters: Record<string, unknown> = {
+				authentication,
+				jwtIssuer: ISSUER,
+				jwtCheckAudience: true,
+				jwtMaxAge: 0,
+				...params,
+			};
+			mockContext.getNodeParameter.mockImplementation((name, fallback) =>
+				name in parameters ? (parameters[name] as never) : fallback,
+			);
+			mockContext.getCredentials.mockResolvedValue({
+				keyType: 'pemKey',
+				publicKey: publicPem,
+				secret: '',
+				algorithm: 'ES256',
+			});
+			mockContext.getHeaderData.mockReturnValue(headers);
+			mockContext.getWebhookResourceUrl.mockReturnValue(MCP_URL);
+			mockContext.getWebhookName.mockReturnValue('default');
+			mockContext.getRequestObject.mockReturnValue(req as never);
+			mockContext.getResponseObject.mockReturnValue(resp as never);
+			mockContext.getBodyData.mockReturnValue({ method: 'tools/call' });
+			mockContext.getNode.mockReturnValue(mock<INode>({ typeVersion, name: 'MCP Server Trigger' }));
+			mockMcpServer.getSessionId.mockReturnValue('test-session');
+			mockMcpServer.handlePostMessage.mockResolvedValue({
+				wasToolCall: true,
+				toolCallInfo: { toolName: 'test-tool', arguments: {} },
+				messageId: 'msg-123',
+				relaySessionId: undefined,
+				needsListToolsRelay: false,
+			});
+
+			return { req, resp };
+		};
+
+		beforeEach(async () => {
+			const actual = await vi.importActual<
+				typeof import('n8n-nodes-base/dist/nodes/Webhook/utils')
+			>('n8n-nodes-base/dist/nodes/Webhook/utils');
+			const { WebhookAuthorizationError }: { WebhookAuthorizationError: any } =
+				await vi.importActual('n8n-nodes-base/dist/nodes/Webhook/error');
+			// The real helper loads its own copy of the error class, so rethrow it as the class the trigger checks for.
+			validateWebhookAuthenticationMock.mockImplementation(async (...args: unknown[]) => {
+				try {
+					return await Reflect.apply(actual.validateWebhookAuthentication, undefined, args);
+				} catch (error) {
+					if (error instanceof Error && 'responseCode' in error) {
+						throw new WebhookAuthorizationError(error.responseCode, error.message);
+					}
+					throw error;
+				}
+			});
+		});
+
+		const expectRefused = async (
+			opts: Parameters<typeof setup>[0],
+			status: number,
+			message?: string,
+		) => {
+			const { resp } = setup(opts);
+
+			const result = await mcpTrigger.webhook(mockContext);
+
+			expect(result).toEqual({ noWebhookResponse: true });
+			expect(resp.writeHead).toHaveBeenCalledWith(status);
+			if (message) expect(resp.end).toHaveBeenCalledWith(expect.stringContaining(message));
+			expect(mockMcpServer.handlePostMessage).not.toHaveBeenCalled();
+			expect(getConnectedTools).not.toHaveBeenCalled();
+		};
+
+		it('passes the verified payload to the tools and redacts the token', async () => {
+			const token = signEs256({ sub: 'caller-1', tenant: 'acme' });
+			const { req } = setup({ token });
+
+			const result = await mcpTrigger.webhook(mockContext);
+
+			const expectedPayload = expect.objectContaining({
+				sub: 'caller-1',
+				tenant: 'acme',
+				iss: ISSUER,
+				aud: MCP_URL,
+			});
+			expect(result.toolInput).toEqual({
+				body: { method: 'tools/call' },
+				headers: { authorization: REDACTED },
+				jwtPayload: expectedPayload,
+			});
+			expect(toolInputPassedToSubNodes()).toEqual(result.toolInput);
+			expect(result.workflowData?.[0][0].json).toEqual({
+				mcpToolCall: { toolName: 'test-tool', arguments: {} },
+				mcpMessageId: 'msg-123',
+				headers: { authorization: REDACTED },
+				jwtPayload: expectedPayload,
+			});
+			expect(JSON.stringify(result)).not.toContain(token);
+			expect(req.headers.authorization).toBe(`Bearer ${token}`);
+			expect(mockContext.getWebhookResourceUrl).toHaveBeenCalledWith('default');
+		});
+
+		it('does not check the audience or the issuer when they are not configured', async () => {
+			const token = signEs256({ aud: 'https://elsewhere.example.com', iss: 'someone-else' });
+			setup({ token, params: { jwtIssuer: '', jwtCheckAudience: false } });
+
+			const result = await mcpTrigger.webhook(mockContext);
+
+			expect(result.toolInput).toHaveProperty('jwtPayload');
+		});
+
+		it('checks the audience against the setup URL on the setup request', async () => {
+			const token = signEs256();
+			setup({ token });
+			mockContext.getWebhookName.mockReturnValue('setup');
+
+			await mcpTrigger.webhook(mockContext);
+
+			expect(mockContext.getWebhookResourceUrl).toHaveBeenCalledWith('setup');
+			expect(mockMcpServer.handleSetupRequest).toHaveBeenCalled();
+		});
+
+		it('refuses a request without a token with 401', async () => {
+			await expectRefused({}, 401, 'No token provided');
+		});
+
+		it('refuses a token with the none algorithm', async () => {
+			const token = `${unsigned({ alg: 'none', typ: 'JWT' }, { aud: MCP_URL, iss: ISSUER })}.`;
+			await expectRefused({ token }, 403);
+		});
+
+		it('refuses an HS256 token signed with the public key as the secret', async () => {
+			const signingInput = unsigned(
+				{ alg: 'HS256', typ: 'JWT' },
+				{ aud: MCP_URL, iss: ISSUER, iat: nowSeconds() },
+			);
+			const signature = createHmac('sha256', publicPem).update(signingInput).digest('base64url');
+			await expectRefused({ token: `${signingInput}.${signature}` }, 403);
+		});
+
+		it('refuses a token with a changed payload', async () => {
+			const [header, , signature] = signEs256({ sub: 'caller-1' }).split('.');
+			const payload = base64Url({ aud: MCP_URL, iss: ISSUER, sub: 'caller-2' });
+			await expectRefused({ token: `${header}.${payload}.${signature}` }, 403, 'invalid signature');
+		});
+
+		it('refuses an expired token', async () => {
+			await expectRefused({ token: signEs256({ exp: nowSeconds() - 60 }) }, 403, 'jwt expired');
+		});
+
+		it('refuses a token for another audience', async () => {
+			const token = signEs256({ aud: 'https://n8n.example.com/mcp-test/abc' });
+			await expectRefused({ token }, 403, 'audience invalid');
+		});
+
+		it('refuses a token from another issuer', async () => {
+			await expectRefused(
+				{ token: signEs256({ iss: 'https://other.example.com' }) },
+				403,
+				'issuer',
+			);
+		});
+
+		it('refuses a token older than the maximum age', async () => {
+			const token = signEs256({ iat: nowSeconds() - 600 });
+			await expectRefused({ token, params: { jwtMaxAge: 60 } }, 403, 'maxAge exceeded');
+		});
+
+		it('refuses a token without iat when a maximum age is set', async () => {
+			const token = signEs256({}, { noTimestamp: true });
+			await expectRefused({ token, params: { jwtMaxAge: 60 } }, 403, 'iat required');
+		});
+
+		it('refuses with 500 when the audience URL is not available', async () => {
+			const { resp } = setup({ token: signEs256() });
+			mockContext.getWebhookResourceUrl.mockReturnValue(undefined);
+
+			await mcpTrigger.webhook(mockContext);
+
+			expect(resp.writeHead).toHaveBeenCalledWith(500);
+			expect(mockMcpServer.handlePostMessage).not.toHaveBeenCalled();
+		});
+
+		it.each(['none', 'bearerAuth', 'headerAuth'])(
+			'exposes no jwtPayload with %s authentication',
+			async (authentication) => {
+				setup({ authentication });
+				validateWebhookAuthenticationMock.mockResolvedValue(undefined);
+
+				const result = await mcpTrigger.webhook(mockContext);
+
+				expect(result.toolInput).not.toHaveProperty('jwtPayload');
+				expect(result.workflowData?.[0][0].json).not.toHaveProperty('jwtPayload');
+			},
+		);
+
+		it('exposes no jwtPayload on version 2.0', async () => {
+			setup({ token: signEs256(), typeVersion: 2 });
+
+			const result = await mcpTrigger.webhook(mockContext);
+
+			expect(result.toolInput).toBeUndefined();
+			expect(result.workflowData?.[0][0].json).not.toHaveProperty('jwtPayload');
 		});
 	});
 

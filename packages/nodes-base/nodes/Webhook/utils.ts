@@ -353,9 +353,13 @@ const matchesCustomAuthValues = (provided: unknown, expected: IDataObject | unde
 	);
 };
 
+/** Standard claim checks that `jsonwebtoken` runs after the signature check. */
+export type JwtClaimChecks = Pick<jwt.VerifyOptions, 'audience' | 'issuer' | 'maxAge'>;
+
 export async function validateWebhookAuthentication(
 	ctx: IWebhookFunctions,
 	authPropertyName: string,
+	jwtClaimChecks?: JwtClaimChecks,
 ): Promise<IDataObject | undefined> {
 	const authentication = ctx.getNodeParameter(authPropertyName, 'none') as string;
 	if (authentication === 'none') return;
@@ -506,7 +510,9 @@ export async function validateWebhookAuthentication(
 		}
 
 		try {
+			// The algorithm comes last, so that the credential always fixes it.
 			const payload = jwt.verify(token, secretOrPublicKey, {
+				...jwtClaimChecks,
 				algorithms: [expectedAuth.algorithm],
 			}) as IDataObject;
 
