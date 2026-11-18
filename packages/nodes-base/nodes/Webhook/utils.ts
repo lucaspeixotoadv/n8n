@@ -353,6 +353,8 @@ const matchesCustomAuthValues = (provided: unknown, expected: IDataObject | unde
 	);
 };
 
+const JWT_IAT_CLOCK_TOLERANCE_SECONDS = 30;
+
 /** Standard claim checks that `jsonwebtoken` runs after the signature check. */
 export type JwtClaimChecks = Pick<jwt.VerifyOptions, 'audience' | 'issuer' | 'maxAge'>;
 
@@ -494,6 +496,13 @@ export async function validateWebhookAuthentication(
 			throw new WebhookAuthorizationError(500, 'No authentication data defined on node!');
 		}
 
+		// A credential without a signature algorithm or without a key would accept unsigned tokens.
+		const key =
+			expectedAuth.keyType === 'passphrase' ? expectedAuth.secret : expectedAuth.publicKey;
+		if (!key?.trim() || !expectedAuth.algorithm || expectedAuth.algorithm === 'none') {
+			throw new WebhookAuthorizationError(500, 'The JWT credential is not set up correctly!');
+		}
+
 		const authHeader = req.headers.authorization;
 		const token = authHeader?.split(' ')[1];
 
@@ -515,6 +524,15 @@ export async function validateWebhookAuthentication(
 				...jwtClaimChecks,
 				algorithms: [expectedAuth.algorithm],
 			}) as IDataObject;
+
+			// jsonwebtoken does not refuse an "iat" in the future, so a token could outlive "maxAge".
+			if (
+				jwtClaimChecks?.maxAge !== undefined &&
+				typeof payload.iat === 'number' &&
+				payload.iat > Math.floor(Date.now() / 1000) + JWT_IAT_CLOCK_TOLERANCE_SECONDS
+			) {
+				throw new Error('iat is in the future');
+			}
 
 			recordConsumedAuth(req, ['authorization']);
 

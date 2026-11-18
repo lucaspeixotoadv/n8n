@@ -764,8 +764,17 @@ describe('McpTrigger', () => {
 			typeVersion?: number;
 			authentication?: string;
 			params?: Record<string, unknown>;
+			webhookName?: 'setup' | 'default';
+			sessionId?: string;
 		}) => {
-			const { token, typeVersion = 2.1, authentication = 'jwtAuth', params = {} } = opts;
+			const {
+				token,
+				typeVersion = 2.1,
+				authentication = 'jwtAuth',
+				params = {},
+				webhookName = 'default',
+				sessionId,
+			} = opts;
 			const headers: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {};
 			const req = createMockRequest({ path: '/mcp/abc', headers });
 			const resp = createMockResponse();
@@ -788,12 +797,12 @@ describe('McpTrigger', () => {
 			});
 			mockContext.getHeaderData.mockReturnValue(headers);
 			mockContext.getWebhookResourceUrl.mockReturnValue(MCP_URL);
-			mockContext.getWebhookName.mockReturnValue('default');
+			mockContext.getWebhookName.mockReturnValue(webhookName);
 			mockContext.getRequestObject.mockReturnValue(req as never);
 			mockContext.getResponseObject.mockReturnValue(resp as never);
 			mockContext.getBodyData.mockReturnValue({ method: 'tools/call' });
 			mockContext.getNode.mockReturnValue(mock<INode>({ typeVersion, name: 'MCP Server Trigger' }));
-			mockMcpServer.getSessionId.mockReturnValue('test-session');
+			mockMcpServer.getSessionId.mockReturnValue(sessionId ?? 'test-session');
 			mockMcpServer.handlePostMessage.mockResolvedValue({
 				wasToolCall: true,
 				toolCallInfo: { toolName: 'test-tool', arguments: {} },
@@ -809,14 +818,19 @@ describe('McpTrigger', () => {
 			const actual = await vi.importActual<
 				typeof import('n8n-nodes-base/dist/nodes/Webhook/utils')
 			>('n8n-nodes-base/dist/nodes/Webhook/utils');
-			const { WebhookAuthorizationError }: { WebhookAuthorizationError: any } =
-				await vi.importActual('n8n-nodes-base/dist/nodes/Webhook/error');
+			const { WebhookAuthorizationError } = await vi.importActual<
+				typeof import('n8n-nodes-base/dist/nodes/Webhook/error')
+			>('n8n-nodes-base/dist/nodes/Webhook/error');
 			// The real helper loads its own copy of the error class, so rethrow it as the class the trigger checks for.
 			validateWebhookAuthenticationMock.mockImplementation(async (...args: unknown[]) => {
 				try {
 					return await Reflect.apply(actual.validateWebhookAuthentication, undefined, args);
 				} catch (error) {
-					if (error instanceof Error && 'responseCode' in error) {
+					if (
+						error instanceof Error &&
+						'responseCode' in error &&
+						typeof error.responseCode === 'number'
+					) {
 						throw new WebhookAuthorizationError(error.responseCode, error.message);
 					}
 					throw error;
@@ -837,6 +851,8 @@ describe('McpTrigger', () => {
 			expect(resp.writeHead).toHaveBeenCalledWith(status);
 			if (message) expect(resp.end).toHaveBeenCalledWith(expect.stringContaining(message));
 			expect(mockMcpServer.handlePostMessage).not.toHaveBeenCalled();
+			expect(mockMcpServer.handleSetupRequest).not.toHaveBeenCalled();
+			expect(mockMcpServer.handleStreamableHttpSetup).not.toHaveBeenCalled();
 			expect(getConnectedTools).not.toHaveBeenCalled();
 		};
 
@@ -948,6 +964,85 @@ describe('McpTrigger', () => {
 
 			expect(resp.writeHead).toHaveBeenCalledWith(500);
 			expect(mockMcpServer.handlePostMessage).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			{
+				label: 'an empty secret',
+				credential: { keyType: 'passphrase', secret: '', publicKey: '' },
+			},
+			{ label: 'an empty PEM key', credential: { keyType: 'pemKey', secret: '', publicKey: '' } },
+		])(
+			'refuses with 500 a credential with the none algorithm and $label',
+			async ({ credential }) => {
+				const token = `${unsigned({ alg: 'none', typ: 'JWT' }, { aud: MCP_URL, iss: ISSUER })}.`;
+				const { resp } = setup({ token });
+				mockContext.getCredentials.mockResolvedValue({ ...credential, algorithm: 'none' });
+
+				await mcpTrigger.webhook(mockContext);
+
+				expect(resp.writeHead).toHaveBeenCalledWith(500);
+				expect(mockMcpServer.handlePostMessage).not.toHaveBeenCalled();
+				expect(getConnectedTools).not.toHaveBeenCalled();
+			},
+		);
+
+		it('accepts a valid RS256 token', async () => {
+			const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
+			const token = jwt.sign({ aud: MCP_URL, iss: ISSUER, sub: 'caller-rsa' }, rsa.privateKey, {
+				algorithm: 'RS256',
+			});
+			setup({ token });
+			mockContext.getCredentials.mockResolvedValue({
+				keyType: 'pemKey',
+				publicKey: rsa.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+				secret: '',
+				algorithm: 'RS256',
+			});
+
+			const result = await mcpTrigger.webhook(mockContext);
+
+			expect(result.toolInput).toMatchObject({ jwtPayload: { sub: 'caller-rsa' } });
+		});
+
+		it('refuses a token with an iat in the future when a maximum age is set', async () => {
+			const token = signEs256({ iat: nowSeconds() + 365 * 24 * 3600 });
+			await expectRefused({ token, params: { jwtMaxAge: 60 } }, 403, 'iat is in the future');
+		});
+
+		it.each([
+			{ label: 'a string', value: '1h' },
+			{ label: 'an empty string', value: '' },
+			{ label: 'undefined', value: undefined },
+			{ label: 'a negative number', value: -1 },
+			{ label: 'not a finite number', value: Number.NaN },
+		])('refuses with 500 a maximum token age that is $label', async ({ value }) => {
+			await expectRefused({ token: signEs256(), params: { jwtMaxAge: value } }, 500);
+		});
+
+		it('refuses a token whose payload is a string', async () => {
+			const token = jwt.sign('plain-string-payload', privateKey, { algorithm: 'ES256' });
+			await expectRefused(
+				{ token, params: { jwtIssuer: '', jwtCheckAudience: false } },
+				403,
+				'JSON object',
+			);
+		});
+
+		describe.each([
+			{ label: 'SSE setup request', opts: { webhookName: 'setup' as const } },
+			{
+				label: 'Streamable HTTP initialize request without a session',
+				opts: { webhookName: 'default' as const, sessionId: '' },
+			},
+		])('on the $label', ({ opts }) => {
+			it('refuses a missing token with 401', async () => {
+				await expectRefused({ ...opts }, 401, 'No token provided');
+			});
+
+			it('refuses an invalid token with 403', async () => {
+				await expectRefused({ ...opts, token: signEs256({ exp: nowSeconds() - 60 }) }, 403);
+			});
 		});
 
 		it.each(['none', 'bearerAuth', 'headerAuth'])(

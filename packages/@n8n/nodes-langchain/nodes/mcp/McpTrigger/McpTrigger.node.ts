@@ -1,3 +1,4 @@
+import { isRecord } from '@n8n/utils/is-record';
 import { WebhookAuthorizationError } from 'n8n-nodes-base/dist/nodes/Webhook/error';
 import {
 	validateWebhookAuthentication,
@@ -67,8 +68,8 @@ async function getConnectedToolsRespectingCredentialGate(
 
 /**
  * Reads the claim checks for JWT authentication from the node parameters.
- * The audience is the URL this request was served at, so a token for another
- * endpoint (or for the test URL in production) is refused.
+ * The audience is the URL that serves this request. The trigger refuses a token
+ * for another endpoint, or for the test URL in production.
  */
 function getJwtClaimChecks(context: IWebhookFunctions, webhookName: string): JwtClaimChecks {
 	const checks: JwtClaimChecks = {};
@@ -86,7 +87,11 @@ function getJwtClaimChecks(context: IWebhookFunctions, webhookName: string): Jwt
 		checks.audience = audience;
 	}
 
-	const maxAge = Number(context.getNodeParameter('jwtMaxAge', 0));
+	const maxAge = context.getNodeParameter('jwtMaxAge', 0);
+	if (typeof maxAge !== 'number' || !Number.isFinite(maxAge) || maxAge < 0) {
+		// eslint-disable-next-line n8n-nodes-base/node-execute-block-wrong-error-thrown
+		throw new WebhookAuthorizationError(500, 'The maximum token age must be a number of seconds');
+	}
 	if (maxAge > 0) checks.maxAge = maxAge;
 
 	return checks;
@@ -198,7 +203,7 @@ export class McpTrigger extends Node {
 						name: 'JWT Auth',
 						value: 'jwtAuth',
 						description: 'Require a signed JWT in the Authorization header',
-						// The verified payload reaches the tools only when the request is exposed (2.1+)
+						// The tools get the verified payload only from version 2.1, which exposes the request
 						displayOptions: { show: { '@version': [{ _cnd: { gte: 2.1 } }] } },
 					},
 				],
@@ -358,11 +363,19 @@ export class McpTrigger extends Node {
 			authedUser = authResult.user;
 		} else {
 			try {
-				jwtPayload = await validateWebhookAuthentication(
+				const payload = await validateWebhookAuthentication(
 					context,
 					'authentication',
 					authentication === 'jwtAuth' ? getJwtClaimChecks(context, webhookName) : undefined,
 				);
+				if (authentication === 'jwtAuth') {
+					// A token signed over a string has no claims to hand to the tools.
+					if (!isRecord(payload)) {
+						// eslint-disable-next-line n8n-nodes-base/node-execute-block-wrong-error-thrown
+						throw new WebhookAuthorizationError(403, 'The token payload must be a JSON object');
+					}
+					jwtPayload = payload;
+				}
 			} catch (error) {
 				if (error instanceof WebhookAuthorizationError) {
 					resp.writeHead(error.responseCode);

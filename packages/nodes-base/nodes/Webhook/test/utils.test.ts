@@ -992,6 +992,60 @@ describe('Webhook Utils', () => {
 				});
 			});
 
+			it('refuses a token with an iat in the future when a maximum age is set', async () => {
+				const token = await sign({ iat: Math.floor(Date.now() / 1000) + 365 * 24 * 3600 });
+
+				await expect(validate(token, { maxAge: 60 })).rejects.toMatchObject({
+					responseCode: 403,
+					message: expect.stringContaining('iat is in the future'),
+				});
+			});
+
+			it('accepts an iat within the clock tolerance when a maximum age is set', async () => {
+				const token = await sign({ iat: Math.floor(Date.now() / 1000) + 10 });
+
+				await expect(validate(token, { maxAge: 60 })).resolves.toHaveProperty('iat');
+			});
+
+			it('does not check the iat in the future when no maximum age is set', async () => {
+				const token = await sign({ iat: Math.floor(Date.now() / 1000) + 365 * 24 * 3600 });
+
+				await expect(validate(token)).resolves.toHaveProperty('iat');
+			});
+
+			it.each([
+				{
+					label: 'the none algorithm',
+					credential: { keyType: 'passphrase', secret: 'secret', publicKey: '', algorithm: 'none' },
+				},
+				{
+					label: 'an empty secret',
+					credential: { keyType: 'passphrase', secret: '', publicKey: '', algorithm: 'HS256' },
+				},
+				{
+					label: 'an empty PEM key',
+					credential: { keyType: 'pemKey', secret: '', publicKey: '', algorithm: 'ES256' },
+				},
+				{
+					label: 'the none algorithm and an empty secret',
+					credential: { keyType: 'passphrase', secret: '', publicKey: '', algorithm: 'none' },
+				},
+			])('refuses with 500 a credential with $label before verifying', async ({ credential }) => {
+				const headers = { authorization: 'Bearer eyJhbGciOiJub25lIn0.e30.' };
+				const ctx: Partial<IWebhookFunctions> = {
+					getNodeParameter: vi.fn().mockReturnValue('jwtAuth'),
+					getCredentials: vi.fn().mockResolvedValue(credential),
+					getRequestObject: vi.fn().mockReturnValue({ headers }),
+					getHeaderData: vi.fn().mockReturnValue(headers),
+				};
+				(jwt.verify as Mock).mockClear();
+
+				await expect(
+					validateWebhookAuthentication(ctx as IWebhookFunctions, 'authentication'),
+				).rejects.toMatchObject({ responseCode: 500 });
+				expect(jwt.verify).not.toHaveBeenCalled();
+			});
+
 			it('does not check the claims when no claim checks are given', async () => {
 				const token = await sign({ aud: 'anything', iss: 'anyone' });
 
