@@ -15,7 +15,6 @@ import { createAdmin, createMember, createOwner } from '@test-integration/db/use
 import type { SuperAgentTest } from '@test-integration/types';
 import * as utils from '@test-integration/utils';
 
-const LICENSE = 'feat:trustedSourceManage';
 const SYSTEM_ID = 'n8n-internal';
 const ISSUER = 'https://acme.example.com';
 const JWKS_URI = `${ISSUER}/.well-known/jwks.json`;
@@ -28,7 +27,6 @@ Container.set(OAuthDiscoveryClient, discoveryClient);
 const testServer = utils.setupTestServer({
 	endpointGroups: ['trusted-sources'],
 	modules: ['inbound-auth-core'],
-	enabledFeatures: [LICENSE],
 });
 
 let owner: User;
@@ -229,16 +227,6 @@ describe('POST /trusted-sources', () => {
 		expect(response.statusCode).toBe(403);
 		expect(await rows.countBy({ managedBy: 'admin' })).toBe(0);
 	});
-
-	it('answers 403 without the license', async () => {
-		testServer.license.disable(LICENSE);
-
-		const response = await ownerAgent.post('/trusted-sources').send(body());
-
-		expect(response.statusCode).toBe(403);
-		expect(response.body.message).toBe('Plan lacks license for this feature');
-		expect(await rows.countBy({ managedBy: 'admin' })).toBe(0);
-	});
 });
 
 describe('GET /trusted-sources', () => {
@@ -280,14 +268,6 @@ describe('GET /trusted-sources', () => {
 			surfaces: ['public-api'],
 		});
 		expect(JSON.stringify(response.body)).not.toContain(ISSUER);
-	});
-
-	it('lists without the license', async () => {
-		testServer.license.disable(LICENSE);
-
-		const response = await ownerAgent.get('/trusted-sources');
-
-		expect(response.statusCode).toBe(200);
 	});
 });
 
@@ -478,17 +458,6 @@ describe('PATCH /trusted-sources/:id', () => {
 		expect(response.statusCode).toBe(403);
 		expect((await rows.findOneByOrFail({ id })).name).toBe('Acme');
 	});
-
-	it('answers 403 without the license', async () => {
-		const { id } = await createSource();
-		testServer.license.disable(LICENSE);
-
-		const response = await ownerAgent.patch(`/trusted-sources/${id}`).send({ name: 'x' });
-
-		expect(response.statusCode).toBe(403);
-		expect(response.body.message).toBe('Plan lacks license for this feature');
-		expect((await rows.findOneByOrFail({ id })).name).toBe('Acme');
-	});
 });
 
 describe('DELETE /trusted-sources/:id', () => {
@@ -511,16 +480,6 @@ describe('DELETE /trusted-sources/:id', () => {
 			sourceId: id,
 			issuer: ISSUER,
 		});
-	});
-
-	it('works without the license', async () => {
-		const { id } = await createSource();
-		testServer.license.disable(LICENSE);
-
-		const response = await ownerAgent.delete(`/trusted-sources/${id}`);
-
-		expect(response.statusCode).toBe(200);
-		expect(await rows.findOneBy({ id })).toBeNull();
 	});
 
 	it('refuses the system source', async () => {
@@ -594,18 +553,6 @@ describe('POST /trusted-sources/:id/check', () => {
 			lastCheckedAt: expect.any(String),
 		});
 		expect((await rows.findOneByOrFail({ id })).status).toBe('error');
-	});
-
-	it('works without the license', async () => {
-		discoveryClient.fetchOpenIdConfiguration.mockRejectedValue(new Error('down'));
-		discoveryClient.fetchOAuth2ServerMetadata.mockRejectedValue(new Error('down'));
-		const { id } = await createSource();
-		testServer.license.disable(LICENSE);
-
-		const response = await ownerAgent.post(`/trusted-sources/${id}/check`);
-
-		expect(response.statusCode).toBe(200);
-		expect(response.body.data.status).toBe('error');
 	});
 
 	it('answers 404 for an unknown id', async () => {

@@ -20,9 +20,8 @@ describe('TrustedSourceController', () => {
 		expect(metadata.basePath).toBe('/trusted-sources');
 	});
 
-	// Every route needs a global trustedSource scope; only the two writes that create or change a
-	// source are licensed, so an operator can still inspect and remove sources after a lapse.
-	it('gates each route with a global scope and licenses only create and update', () => {
+	// Every route needs a global trustedSource scope. No route needs a license feature.
+	it('gates each route with a global scope and no license feature', () => {
 		expect(routes).toEqual([
 			{
 				route: 'DELETE /:id',
@@ -41,13 +40,13 @@ describe('TrustedSourceController', () => {
 				route: 'PATCH /:id',
 				scope: 'trustedSource:update',
 				globalOnly: true,
-				licenseFeature: 'feat:trustedSourceManage',
+				licenseFeature: undefined,
 			},
 			{
 				route: 'POST /',
 				scope: 'trustedSource:create',
 				globalOnly: true,
-				licenseFeature: 'feat:trustedSourceManage',
+				licenseFeature: undefined,
 			},
 			{
 				route: 'POST /:id/check',

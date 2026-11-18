@@ -1,5 +1,9 @@
 ![Banner image](https://raw.githubusercontent.com/n8n-io/n8n/master/assets/readme-banner.jpg)
 
+> **Modified version.** This repository is a modified copy of n8n. It is not the original
+> software from n8n GmbH. The changes are in the commit history of this repository. The
+> original license terms in [LICENSE.md](LICENSE.md) and [LICENSE_EE.md](LICENSE_EE.md) apply.
+
 # n8n – The Platform for AI Agents and Workflow Automation
 
 Fair-code platform to build and deploy AI agents and workflows. Combine a visual canvas with custom code, run it self-hosted or in the [cloud](https://app.n8n.cloud/login), and connect to 1500+ integrations. AI automation you can trust with real work, from prototype to production.

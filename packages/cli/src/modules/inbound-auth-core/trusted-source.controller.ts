@@ -6,7 +6,6 @@ import {
 	Delete,
 	Get,
 	GlobalScope,
-	Licensed,
 	Param,
 	Patch,
 	Post,
@@ -112,7 +111,6 @@ export class TrustedSourceController {
 	}
 
 	@Post('/')
-	@Licensed('feat:trustedSourceManage')
 	@GlobalScope('trustedSource:create')
 	async create(req: AuthenticatedRequest, _res: Response, @Body dto: CreateTrustedSourceDto) {
 		const { client } = dto.config.authentication;
@@ -132,7 +130,6 @@ export class TrustedSourceController {
 	}
 
 	@Patch('/:id')
-	@Licensed('feat:trustedSourceManage')
 	@GlobalScope('trustedSource:update')
 	async update(
 		req: AuthenticatedRequest,
