@@ -1,0 +1,61 @@
+# Builds the n8n and runners images of this fork and pushes them to Docker Hub
+# as lucaspeixotoadv/n8n:<version> and lucaspeixotoadv/n8n-runners:<version>.
+#
+# The trigger is a fork release tag, n8n@<major>.<minor>.<patch>.<fork>.<fix>
+# (for example n8n@2.46.4.1.9), with digits only. To create the tag is to
+# decide to publish. Upstream tags (n8n@2.47.0, n8n@2.47.0-rc.1) do not match.
+#
+# The build is the same command that scripts/deploy/release-n8n.sh runs on the
+# server (pnpm build:docker), on linux/amd64. After the run, the server pulls
+# the image and runs scripts/deploy/deploy-n8n.sh.
+#
+# Repository secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (a Docker Hub
+# access token with read and write access). Upstream workflows read other
+# secret names, so they do not get these.
+name: 'Fork: Publish Docker images'
+
+on:
+  push:
+    tags:
+      - 'n8n@[0-9]+.[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-fork-docker-images-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'lucaspeixotoadv/n8n'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      IMAGE_BASE_NAME: lucaspeixotoadv/n8n
+      RUNNERS_IMAGE_BASE_NAME: lucaspeixotoadv/n8n-runners
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the version from the tag
+        run: echo "IMAGE_TAG=${GITHUB_REF_NAME#n8n@}" >> "$GITHUB_ENV"
+
+      - name: Install Node.js, pnpm and the dependencies
+        uses: ./.github/actions/setup-nodejs
+        with:
+          build-command: ''
+
+      - name: Build the images
+        run: pnpm build:docker
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push the images
+        run: |
+          docker push "$IMAGE_BASE_NAME:$IMAGE_TAG"
+          docker push "$RUNNERS_IMAGE_BASE_NAME:$IMAGE_TAG"

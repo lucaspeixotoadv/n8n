@@ -2,7 +2,9 @@
 # Uso: /root/deploy-n8n.sh 2.46.4.1.0
 #
 # Troca a stack n8n do Portainer (editor, webhook e worker) para a imagem
-# lucaspeixotoadv/n8n:<versao>, que o release ja construiu neste servidor.
+# lucaspeixotoadv/n8n:<versao>, que ja precisa estar neste servidor: baixada do
+# Docker Hub (docker pull), depois do build do GitHub Actions na tag, ou
+# construida aqui pelo release-n8n.sh.
 # O n8n migra o banco ao subir (um processo por vez, por trava no Postgres):
 # o deploy para os servicos e aplica a stack com a tag nova.
 # Parada: webhook e editor primeiro, worker por ultimo. A fila do Redis fica.

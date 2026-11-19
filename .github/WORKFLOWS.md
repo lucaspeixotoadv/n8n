@@ -573,6 +573,7 @@ out: `npm deprecate n8n@X.Y.Z "Failed release, use X.Y.(Z+1)"`.
 | `release-standalone-package.yml`           | Manual dispatch | Release individual packages (@n8n/codemirror-lang, @n8n/create-node, etc.) |
 | `release-create-patch-pr.yml`              | Manual dispatch | Open a patch release PR for one track          |
 | `release-recreate-failed-release.yml`      | Manual dispatch | Re-release a version whose publish failed after it reached npm |
+| `build-fork-docker-images.yml`             | Fork tag `n8n@2.46.4.1.9` | Fork only: build the images and push them to Docker Hub as `lucaspeixotoadv/n8n` and `lucaspeixotoadv/n8n-runners` |
 
 ---
 

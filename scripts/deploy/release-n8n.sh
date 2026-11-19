@@ -5,6 +5,8 @@
 # (pnpm build:docker) e publica lucaspeixotoadv/n8n:<versao> e
 # lucaspeixotoadv/n8n-runners:<versao>. So se o build terminar bem, faz o
 # deploy (/root/deploy-n8n.sh). Qualquer erro interrompe a cadeia.
+# E o caminho quando o build do GitHub Actions na tag nao esta disponivel
+# (.github/workflows/build-fork-docker-images.yml).
 #
 # INDIFERENTE AO TERMINAL: o script se relanca numa sessao propria e grava
 # tudo em /root/release-n8n-<versao>-<data>.log, build e deploy no mesmo log.
