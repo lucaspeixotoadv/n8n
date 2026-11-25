@@ -1093,7 +1093,7 @@ describe('McpClientTool', () => {
 			);
 		});
 
-		it.each([false, undefined])(
+		it.each([false, undefined, true])(
 			'should filter out tool arguments when additionalProperties is %s',
 			async (additionalProperties) => {
 				vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
@@ -1125,6 +1125,7 @@ describe('McpClientTool', () => {
 								location: 'Berlin',
 								foo: 'bar',
 								sessionId: '123',
+								toolCallId: 'call_1',
 							},
 						},
 					]),
@@ -1165,7 +1166,7 @@ describe('McpClientTool', () => {
 			},
 		);
 
-		it('should pass all arguments when schema has additionalProperties: true', async () => {
+		it('should send no item fields when the schema has no properties and additionalProperties: true', async () => {
 			vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
 			vi.spyOn(Client.prototype, 'callTool').mockResolvedValue({
 				content: [{ type: 'text', text: 'Success' }],
@@ -1211,7 +1212,7 @@ describe('McpClientTool', () => {
 			expect(Client.prototype.callTool).toHaveBeenCalledWith(
 				{
 					name: 'flexible_tool',
-					arguments: { foo: 'bar', extra: 'data' },
+					arguments: {},
 				},
 				expect.anything(),
 				expect.anything(),

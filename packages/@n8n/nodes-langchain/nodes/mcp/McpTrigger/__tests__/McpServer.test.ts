@@ -51,7 +51,7 @@ describe('McpServer', () => {
 			extra: { sessionId?: string },
 		) => { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
 
-		async function advertisedTools() {
+		async function advertisedTools(tools = [toolWithTuple()]) {
 			const server = createMockServer();
 			const internals = mcpServer as unknown as {
 				sessionManager: SessionManager;
@@ -62,7 +62,7 @@ describe('McpServer', () => {
 				sessionId,
 				server,
 				createMockTransport(sessionId, 'streamableHttp'),
-				[toolWithTuple()],
+				tools,
 			);
 			internals.setupHandlers(server);
 
@@ -89,10 +89,23 @@ describe('McpServer', () => {
 			expect(JSON.stringify(tool.inputSchema)).not.toContain('additionalItems');
 		});
 
-		it('keeps plain objects open to extra keys', async () => {
+		it('closes plain objects to extra keys', async () => {
 			const [tool] = await advertisedTools();
 
+			expect(tool.inputSchema.additionalProperties).toBe(false);
+		});
+
+		it('keeps passthrough objects and records open to extra keys', async () => {
+			const [tool] = await advertisedTools([
+				createMockTool('with_open_objects', {
+					schema: z.object({ filters: z.record(z.unknown()) }).passthrough(),
+				}),
+			]);
+
 			expect(tool.inputSchema.additionalProperties).toBe(true);
+			expect(tool.inputSchema.properties).toMatchObject({
+				filters: { type: 'object', additionalProperties: {} },
+			});
 		});
 
 		it('relays the same dialect over SSE', async () => {

@@ -47,7 +47,9 @@ function toolDescriptors(tools: Tool[]) {
 	return tools.map((tool) => ({
 		name: tool.name,
 		description: tool.description,
-		inputSchema: zodToDraft202012(tool.schema, { removeAdditionalStrategy: 'strict' }),
+		// The default strategy closes plain objects (`additionalProperties: false`), so a client
+		// sends only the declared arguments. A `.passthrough()` object stays open.
+		inputSchema: zodToDraft202012(tool.schema),
 	}));
 }
 

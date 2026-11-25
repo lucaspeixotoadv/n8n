@@ -232,6 +232,19 @@ async function connectOrThrow(
 }
 
 /**
+ * Get the tool arguments from an agent tool-call item.
+ *
+ * The engine merges the agent input item, the model arguments and engine fields
+ * (such as `toolCallId`) into one item. The item does not keep the model
+ * arguments apart. Thus we send only the keys that the tool schema declares,
+ * also when `additionalProperties` is `true`.
+ */
+function getDeclaredToolArguments(json: IDataObject, schema: JSONSchema7): IDataObject {
+	// A schema without `properties` gets no arguments from the item: no key is safe to send.
+	return pick(json, Object.keys(schema.properties ?? {}));
+}
+
+/**
  * Run the tool named in `item.json.tool` against the connected client and push
  * the result onto `returnData`. Shared by the cached and non-cached execute paths.
  */
@@ -271,17 +284,15 @@ async function runToolCall(opts: {
 		const prefixedName = buildMcpToolName(node.name, tool.name);
 		if (toolName !== prefixedName) continue;
 
-		const { tool: _, ...toolArguments } = item.json;
-		const schema: JSONSchema7 = tool.inputSchema;
-		const sanitizedToolArguments: IDataObject =
-			schema.additionalProperties !== true
-				? pick(toolArguments, Object.keys(schema.properties ?? {}))
-				: toolArguments;
-
+		// `tool` is the routing field of the agent toolkit, not a tool argument.
+		const { tool: _, ...itemJson } = item.json;
 		const result = await client.callTool(
 			{
 				name: tool.name,
-				arguments: { ...sanitizedToolArguments, ...getFixedArguments(fixedArguments, tool.name) },
+				arguments: {
+					...getDeclaredToolArguments(itemJson, tool.inputSchema),
+					...getFixedArguments(fixedArguments, tool.name),
+				},
 			},
 			CallToolResultSchema,
 			{

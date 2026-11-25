@@ -464,14 +464,18 @@ describe('runtime', () => {
 			);
 		});
 
-		it('passes additional arguments through when additionalProperties is true', async () => {
+		it('sends only the declared arguments when additionalProperties is true', async () => {
 			vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
 			vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({
 				tools: [
 					{
 						name: 'search',
 						description: '',
-						inputSchema: { type: 'object' as const, additionalProperties: true },
+						inputSchema: {
+							type: 'object' as const,
+							properties: { query: { type: 'string' } },
+							additionalProperties: true,
+						},
 					},
 				],
 			});
@@ -480,12 +484,15 @@ describe('runtime', () => {
 				.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
 			vi.spyOn(Client.prototype, 'close').mockResolvedValue();
 
+			// The engine merges the agent input item, the model arguments and `toolCallId`.
 			const ctx = createExecuteCtx([
 				{
 					json: {
 						tool: buildMcpToolName('MCP', 'search'),
+						chatInput: 'agent item field',
+						sessionId: 'agent item field',
 						query: 'hello',
-						extra: 'kept',
+						toolCallId: 'call_1',
 					},
 				},
 			]);
@@ -493,7 +500,41 @@ describe('runtime', () => {
 			await executeMcpTool(ctx, () => baseConfig);
 
 			expect(callTool).toHaveBeenCalledWith(
-				{ name: 'search', arguments: { query: 'hello', extra: 'kept' } },
+				{ name: 'search', arguments: { query: 'hello' } },
+				expect.anything(),
+				expect.anything(),
+			);
+		});
+
+		it('sends no item fields when the tool inputSchema has no properties', async () => {
+			const client = mock<Client>({
+				callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }),
+			});
+			vi.spyOn(utils, 'connectMcpClientForCredential').mockResolvedValue({
+				ok: true,
+				result: client,
+			});
+			vi.spyOn(utils, 'getAllTools').mockResolvedValue([
+				{
+					name: 'ping',
+					description: '',
+					inputSchema: { type: 'object', additionalProperties: true },
+				},
+			]);
+			const ctx = createExecuteCtx([
+				{
+					json: {
+						tool: buildMcpToolName('MCP', 'ping'),
+						chatInput: 'agent item field',
+						toolCallId: 'call_1',
+					},
+				},
+			]);
+
+			await executeMcpTool(ctx, () => baseConfig);
+
+			expect(client.callTool).toHaveBeenCalledWith(
+				{ name: 'ping', arguments: {} },
 				expect.anything(),
 				expect.anything(),
 			);
