@@ -108,6 +108,33 @@ describe('buffer-decoding utils', () => {
 				expect(mockBinaryToString).toHaveBeenCalledTimes(1);
 			});
 
+			it('should keep valid UTF-8 with accented Latin letters without detection', async () => {
+				const text = 'Publicação: Cumprimento de sentença, Cível, ação nº 1 (JSON sem charset)';
+				const buffer = Buffer.from(text, 'utf8');
+				const contentType = 'application/json';
+
+				mockBinaryToString.mockResolvedValue(text);
+
+				const result = await binaryToStringWithEncodingDetection(buffer, contentType, mockHelpers);
+
+				expect(result).toBe(text);
+				expect(mockBinaryToString).toHaveBeenCalledTimes(1);
+				expect(mockDetectBinaryEncoding).not.toHaveBeenCalled();
+			});
+
+			it('should keep valid UTF-8 without detection when Content-Type declares UTF-8', async () => {
+				const text = 'Decisão: ação de execução, citação válida';
+				const buffer = Buffer.from(text, 'utf8');
+				const contentType = 'application/json; charset=utf-8';
+
+				mockBinaryToString.mockResolvedValue(text);
+
+				const result = await binaryToStringWithEncodingDetection(buffer, contentType, mockHelpers);
+
+				expect(result).toBe(text);
+				expect(mockDetectBinaryEncoding).not.toHaveBeenCalled();
+			});
+
 			it('should not trigger re-encoding when UTF-8 content is clean', async () => {
 				const buffer = Buffer.from('Hello World! 🌍', 'utf8');
 				const contentType = 'text/html';
@@ -123,7 +150,7 @@ describe('buffer-decoding utils', () => {
 
 		describe('Replacement character detection and re-encoding', () => {
 			it('should detect replacement characters and try chardet for Buffer', async () => {
-				const buffer = Buffer.from('test content with �', 'utf8');
+				const buffer = Buffer.from('test content with \xe7', 'latin1');
 				const contentType = 'text/html';
 
 				mockBinaryToString
@@ -141,13 +168,12 @@ describe('buffer-decoding utils', () => {
 				expect(result).toBe('test content with proper chars');
 			});
 
-			it('should detect high ASCII pattern and try chardet for Buffer', async () => {
-				const buffer = Buffer.from([0x80, 0x81, 0x82, 0x83]); // High ASCII bytes
+			it('should try chardet for invalid UTF-8 high bytes in a Buffer', async () => {
+				const buffer = Buffer.from([0x80, 0x81, 0x82, 0x83]); // Invalid UTF-8 bytes
 				const contentType = 'text/html';
-				const highAsciiString = String.fromCharCode(0x80, 0x81, 0x82, 0x83);
 
 				mockBinaryToString
-					.mockResolvedValueOnce(highAsciiString) // First UTF-8 attempt
+					.mockResolvedValueOnce('����') // First UTF-8 attempt
 					.mockResolvedValueOnce('proper decoded content'); // Second attempt with detected encoding
 
 				mockDetectBinaryEncoding.mockReturnValue('windows-1252');
@@ -165,7 +191,7 @@ describe('buffer-decoding utils', () => {
 				readable.push('content with �');
 				readable.push(null);
 				const contentType = 'text/html';
-				const buffer = Buffer.from('content with �');
+				const buffer = Buffer.from('content with \xe7', 'latin1');
 
 				mockBinaryToBuffer.mockResolvedValue(buffer);
 				mockBinaryToString
@@ -192,7 +218,7 @@ describe('buffer-decoding utils', () => {
 				readable.push('content with �');
 				readable.push(null);
 				const contentType = 'text/html';
-				const buffer = Buffer.from('content with �');
+				const buffer = Buffer.from('content with \xe7', 'latin1');
 
 				mockBinaryToBuffer.mockResolvedValue(buffer);
 				mockBinaryToString
@@ -219,7 +245,7 @@ describe('buffer-decoding utils', () => {
 				readable.push('content with �');
 				readable.push(null);
 				const contentType = 'text/html';
-				const buffer = Buffer.from('content with �');
+				const buffer = Buffer.from('content with \xe7', 'latin1');
 
 				mockBinaryToBuffer.mockResolvedValue(buffer);
 				mockBinaryToString
@@ -242,7 +268,7 @@ describe('buffer-decoding utils', () => {
 
 		describe('Error handling', () => {
 			it('should handle chardet returning null for Buffer', async () => {
-				const buffer = Buffer.from('test content with �', 'utf8');
+				const buffer = Buffer.from('test content with \xe7', 'latin1');
 				const contentType = 'text/html';
 
 				mockBinaryToBuffer.mockResolvedValue(buffer);
@@ -256,7 +282,7 @@ describe('buffer-decoding utils', () => {
 			});
 
 			it('should handle chardet returning same encoding as default', async () => {
-				const buffer = Buffer.from('test content with �', 'utf8');
+				const buffer = Buffer.from('test content with \xe7', 'latin1');
 				const contentType = 'text/html';
 
 				mockBinaryToBuffer.mockResolvedValue(buffer);
@@ -274,7 +300,7 @@ describe('buffer-decoding utils', () => {
 				readable.push('content with �');
 				readable.push(null);
 				const contentType = 'text/html';
-				const buffer = Buffer.from('content with �');
+				const buffer = Buffer.from('content with \xe7', 'latin1');
 
 				mockBinaryToBuffer.mockResolvedValue(buffer);
 				mockBinaryToString
@@ -298,7 +324,7 @@ describe('buffer-decoding utils', () => {
 				readable.push('content with �');
 				readable.push(null);
 				const contentType = 'text/html';
-				const buffer = Buffer.from('content with �');
+				const buffer = Buffer.from('content with \xe7', 'latin1');
 
 				mockBinaryToBuffer.mockResolvedValue(buffer);
 				mockBinaryToString
@@ -353,7 +379,7 @@ describe('buffer-decoding utils', () => {
 				readable.push('content with �');
 				readable.push(null);
 				const contentType = 'text/html';
-				const buffer = Buffer.from('content with �');
+				const buffer = Buffer.from('content with \xe7', 'latin1');
 
 				mockBinaryToBuffer.mockResolvedValue(buffer);
 				mockBinaryToString
@@ -372,25 +398,8 @@ describe('buffer-decoding utils', () => {
 				expect(result).toBe('content with �'); // Should return original
 			});
 
-			it('should handle very short high ASCII sequences (less than 3 chars)', async () => {
-				const buffer = Buffer.from([0x80, 0x81]); // Only 2 high ASCII bytes
-				const contentType = 'text/html';
-				const shortHighAsciiString = String.fromCharCode(0x80, 0x81);
-
-				mockBinaryToString.mockResolvedValue(shortHighAsciiString);
-
-				const result = await binaryToStringWithEncodingDetection(buffer, contentType, mockHelpers);
-
-				expect(result).toBe(shortHighAsciiString);
-				expect(mockBinaryToString).toHaveBeenCalledTimes(1); // Should not trigger re-encoding
-				expect(mockDetectBinaryEncoding).not.toHaveBeenCalled();
-			});
-
 			it('should handle mixed content with both replacement chars and high ASCII', async () => {
-				const buffer = Buffer.from(
-					'test � content ' + String.fromCharCode(0x80, 0x81, 0x82),
-					'utf8',
-				);
+				const buffer = Buffer.from('test \xe7 content \x80\x81\x82', 'latin1');
 				const contentType = 'text/html';
 
 				mockBinaryToString
@@ -422,7 +431,7 @@ describe('buffer-decoding utils', () => {
 			});
 
 			it('should return result from specified encoding even if it contains replacement chars', async () => {
-				const buffer = Buffer.from('test content with �', 'utf8');
+				const buffer = Buffer.from('test content with \xe7', 'latin1');
 				const contentType = 'text/html; charset=iso-8859-1';
 
 				mockBinaryToString.mockResolvedValue('test content with �');

@@ -1,9 +1,9 @@
+import { isUtf8 } from 'node:buffer';
 import type { IExecuteFunctions } from 'n8n-workflow';
 import type { Readable } from 'stream';
 
 const CHINESE_ENCODINGS = ['gb18030', 'gbk', 'gb2312'] as const;
 const REPLACEMENT_CHAR = '�';
-const HIGH_ASCII_PATTERN = /[\x80-\xFF]{3,}/;
 const DEFAULT_ENCODING = 'utf-8';
 
 /**
@@ -54,7 +54,12 @@ export async function binaryToStringWithEncodingDetection(
 
 	const decodedString = await helpers.binaryToString(bufferedData);
 
-	if (decodedString.includes(REPLACEMENT_CHAR) || HIGH_ASCII_PATTERN.test(decodedString)) {
+	// Valid UTF-8 bytes are UTF-8 text. Accented Latin letters (U+0080 to U+00FF) are valid
+	// characters, so do not use them as a sign of a wrong encoding. Only invalid UTF-8 goes
+	// to detection, because chardet can identify UTF-8 text as GB18030.
+	if (isUtf8(bufferedData)) return decodedString;
+
+	if (decodedString.includes(REPLACEMENT_CHAR)) {
 		const detected = helpers.detectBinaryEncoding(bufferedData).toLowerCase() as BufferEncoding;
 		if (detected && detected !== DEFAULT_ENCODING) {
 			return await helpers.binaryToString(bufferedData, detected);
